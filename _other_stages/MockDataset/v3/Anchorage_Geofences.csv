@@ -1,0 +1,5 @@
+anchorage,latitude_n,longitude_e,vtis_sector,used_in_workbook_sessions,geofence_radius_m,merge_decision,verification_status
+Eastern Anchorage,1.25,103.8833,Sector 8 — VTIS Central (CH 14),"SES-001,008,012,016,019,021,022,023",2000,accepted_for_demo_geofence_reference,team_provided_approx_coordinates; verify against official MPA chart before production
+Jurong Anchorage,1.2847,103.7015,Sector 7 — VTIS West (CH 73),"SES-004,020",2000,accepted_for_demo_geofence_reference,team_provided_approx_coordinates; verify against official MPA chart before production
+Western Anchorage,1.1742,103.6478,Sector 7 — VTIS West (CH 73),—,2000,accepted_for_demo_geofence_reference,team_provided_approx_coordinates; verify against official MPA chart before production
+Eastern Roads,1.3,104,Sector 8 — VTIS Central (CH 14),—,1500,accepted_for_demo_geofence_reference,team_provided_approx_coordinates; verify against official MPA chart before production

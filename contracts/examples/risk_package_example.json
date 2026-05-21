@@ -1,0 +1,35 @@
+{
+  "session_id": "SES-2026-012",
+  "generated_at": "2026-05-10T12:00:06Z",
+  "risk_score": 85,
+  "risk_category": "CRITICAL",
+  "verdict": "REFUSE_TO_SIGN",
+  "verdict_reason": "Quantity shortfall 3.65% exceeded 3% policy floor.",
+  "estimated_impact_usd": 16098.30,
+  "similar_30d_count": 3,
+  "requires_lop": true,
+  "requires_surveyor": true,
+  "requires_resample": false,
+  "audit": {
+    "components": {
+      "anomaly_severity": 70.0,
+      "supplier_history": 58.0,
+      "doc_completeness": 10.0,
+      "realtime_quantity_risk": 73.0
+    },
+    "weighted": {
+      "anomaly_x40": 28.0,
+      "supplier_x25": 14.5,
+      "doc_x15": 1.5,
+      "realtime_x20": 14.6
+    },
+    "raw_weighted_sum": 58.6,
+    "floor_triggers": [
+      {"code": "A02>3%", "forced_min_score": 78, "reason": "Shortfall above 3% policy floor"},
+      {"code": "SUPPLIER_WATCHLIST", "forced_min_score": 85, "reason": "Supplier on watchlist with prior critical"}
+    ],
+    "final_score_before_floor": 58.6,
+    "final_score_after_floor": 85.0
+  },
+  "payload_sha256": "c4e1..."
+}

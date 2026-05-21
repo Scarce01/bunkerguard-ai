@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BunkerGuard — Master's Card</title>
+<style>
+  :root {
+    --bg: #0b1220; --card: #111a2e; --crit: #ff3b30; --gold: #f5b400;
+    --green: #34c759; --ink: #f4f6fb; --muted: #9aa3b2;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "SF Pro", system-ui, sans-serif;
+         background: #1d2333; min-height: 100vh; padding: 36px 12px;
+         display: flex; justify-content: center; align-items: flex-start; }
+  .phone {
+    width: 390px; height: 844px;
+    background: var(--bg); border-radius: 50px;
+    box-shadow: 0 30px 80px rgba(0,0,0,.55), 0 0 0 12px #0a0a0a;
+    overflow: hidden; position: relative; color: var(--ink);
+  }
+  .notch { width: 130px; height: 30px; background: #000; position: absolute;
+           top: 0; left: 50%; transform: translateX(-50%);
+           border-radius: 0 0 18px 18px; z-index: 9; }
+  .status { padding: 14px 24px 6px; font-size: 13px; color: var(--muted);
+            display: flex; justify-content: space-between; }
+  .head { padding: 0 22px; }
+  .brand { font-weight: 700; font-size: 14px; letter-spacing: .2em;
+           color: var(--gold); margin-top: 4px; }
+  .vessel { font-size: 22px; font-weight: 600; margin-top: 2px; }
+  .vessel small { font-size: 12px; color: var(--muted); font-weight: 400; }
+  .hero {
+    margin: 14px 22px; padding: 22px 18px; border-radius: 22px;
+    background: radial-gradient(ellipse at top, #ff3b3033 0%, #1a0d10 70%);
+    border: 1.5px solid var(--crit); text-align: center;
+  }
+  .pulse {
+    width: 110px; height: 110px; border-radius: 50%; margin: 8px auto 16px;
+    background: radial-gradient(circle, #ff3b30 0%, #7d0000 80%);
+    box-shadow: 0 0 0 0 rgba(255,59,48,.6);
+    animation: pulse 1.6s infinite; display: flex;
+    align-items: center; justify-content: center; font-size: 48px;
+  }
+  @keyframes pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(255,59,48,.6); }
+    70%  { box-shadow: 0 0 0 30px rgba(255,59,48,0); }
+    100% { box-shadow: 0 0 0 0 rgba(255,59,48,0); }
+  }
+  .verdict { font-size: 26px; font-weight: 800; letter-spacing: .04em; }
+  .verdict-sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .row { display: flex; gap: 8px; margin: 12px 22px 0; }
+  .pill {
+    flex: 1; background: var(--card); border-radius: 14px; padding: 10px 12px;
+    border: 1px solid #1f2a44;
+  }
+  .pill .lab { color: var(--muted); font-size: 10px; letter-spacing: .12em;
+               text-transform: uppercase; }
+  .pill .val { font-size: 16px; font-weight: 700; margin-top: 2px; }
+  .findings { margin: 14px 22px; }
+  .finding {
+    background: var(--card); border-left: 3px solid var(--crit);
+    padding: 10px 12px; border-radius: 8px; margin-bottom: 8px;
+    font-size: 12.5px; line-height: 1.45;
+  }
+  .finding .code { color: var(--gold); font-weight: 700; font-size: 11px;
+                   letter-spacing: .08em; }
+  .finding .name { color: var(--ink); font-weight: 600; }
+  .finding .basis { color: var(--muted); font-size: 10.5px; margin-top: 3px; }
+  .actions { position: absolute; bottom: 14px; left: 22px; right: 22px; }
+  .btn {
+    display: block; width: 100%; padding: 16px; border-radius: 16px;
+    font-weight: 700; font-size: 16px; text-align: center; margin-bottom: 8px;
+    cursor: pointer; user-select: none; border: none;
+  }
+  .btn-refuse { background: var(--crit); color: #fff;
+                box-shadow: 0 8px 24px rgba(255,59,48,.45); }
+  .btn-evidence { background: #1c2740; color: var(--ink);
+                  border: 1px solid #2c3a5e; font-weight: 600; font-size: 14px; }
+  .chain { font-family: ui-monospace, "SF Mono", monospace;
+           font-size: 9px; color: var(--muted); text-align: center;
+           margin-top: 10px; }
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="notch"></div>
+
+  <div class="status">
+    <span>03:14</span>
+    <span>⚓ ALERT</span>
+    <span>5G  ▰▰▰▰▱</span>
+  </div>
+
+  <div class="head">
+    <div class="brand">⚓ BUNKERGUARD</div>
+    <div class="vessel">MSC ARIES <small>· IMO 9778801</small></div>
+  </div>
+
+  <div class="hero">
+    <div class="pulse">🛑</div>
+    <div class="verdict">REFUSE TO SIGN</div>
+    <div class="verdict-sub">CRITICAL · Score 90/100 · 4 findings</div>
+  </div>
+
+  <div class="row">
+    <div class="pill">
+      <div class="lab">EXPOSURE</div>
+      <div class="val">$36,559</div>
+    </div>
+    <div class="pill">
+      <div class="lab">DEVIATION</div>
+      <div class="val" style="color:var(--crit)">−3.30%</div>
+    </div>
+    <div class="pill">
+      <div class="lab">DISPUTE WIN</div>
+      <div class="val">72h</div>
+    </div>
+  </div>
+
+  <div class="findings">
+    <div class="finding">
+      <div><span class="code">A_CAP</span>  <span class="name">Cappuccino · air injection</span></div>
+      <div class="basis">MEPC.1/Circ.891 §6 · drive_gain spike +22%</div>
+    </div>
+    <div class="finding">
+      <div><span class="code">A02</span>  <span class="name">Quantity short −42 MT</span></div>
+      <div class="basis">ISO 8217:2024 · sounding tape confirms</div>
+    </div>
+    <div class="finding">
+      <div><span class="code">A15</span>  <span class="name">Supplier unlicensed (MPA)</span></div>
+      <div class="basis">SS 600:2014 · owner change &lt; 90d</div>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button class="btn btn-refuse">🛑  REFUSE & SERVE LOP</button>
+    <button class="btn btn-evidence">View Evidence · Chain 0x3a7f4c…</button>
+    <div class="chain">SHA-256 · Ed25519 signed · MPA-eBDN ready</div>
+  </div>
+</div>
+</body>
+</html>
