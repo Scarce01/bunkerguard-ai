@@ -122,15 +122,15 @@ Each rule = a pure function `(SessionInput) -> list[Anomaly]`. All citations and
 
 ```mermaid
 flowchart LR
-    A[Anomaly severity<br/>Σ severity × confidence × cal_factor<br/>cap 100] -->|×0.40| W[Weighted sum]
-    B[Supplier history<br/>100 − reputation<br/>+ 30d critical count<br/>+ flag penalty] -->|×0.25| W
-    C[Doc completeness<br/>100 − BDN completeness<br/>+ eBDN/seal penalties] -->|×0.15| W
-    D[Realtime quantity<br/>stepped table on |dev_pct|<br/>0.5/1/2/5/10 %] -->|×0.20| W
-    W --> F[Apply floors<br/>max wins]
-    F --> B1[Band 0-20 LOW]
-    F --> B2[Band 21-45 MODERATE]
-    F --> B3[Band 46-70 HIGH]
-    F --> B4[Band 71-100 CRITICAL]
+    A["Anomaly severity<br/>Σ severity × confidence × cal_factor<br/>cap 100"] -->|x0.40| W["Weighted sum"]
+    B["Supplier history<br/>100 − reputation<br/>+ 30d critical count<br/>+ flag penalty"] -->|x0.25| W
+    C["Doc completeness<br/>100 − BDN completeness<br/>+ eBDN/seal penalties"] -->|x0.15| W
+    D["Realtime quantity<br/>stepped table on abs dev_pct<br/>0.5 / 1 / 2 / 5 / 10 %"] -->|x0.20| W
+    W --> F["Apply floors<br/>max wins"]
+    F --> B1["Band 0-20 LOW"]
+    F --> B2["Band 21-45 MODERATE"]
+    F --> B3["Band 46-70 HIGH"]
+    F --> B4["Band 71-100 CRITICAL"]
 ```
 
 | Weight | Component | Rationale |
