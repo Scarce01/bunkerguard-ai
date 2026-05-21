@@ -74,7 +74,7 @@ Each rule = a pure function `(SessionInput) -> list[Anomaly]`. All citations and
 | ID | Name | Trigger | Regulatory basis |
 |----|------|---------|------------------|
 | **A01** | Quantity trajectory deviation | Cumulative MFM curve deviates from linear delivery profile | MEPC.1/Circ.891 §4.2 |
-| **A02** | Quantity final mismatch | `|MFM − BDN| / BDN > 0.5 %` (LOW) → 1.5 % (MED) → 3 % (CRIT) | SS 648:2019, MEPC.1/Circ.891 |
+| **A02** | Quantity final mismatch | abs(MFM − BDN) / BDN > 0.5 % (LOW) → 1.5 % (MED) → 3 % (CRIT) | SS 648:2019, MEPC.1/Circ.891 |
 | **A04** | Flow-rate anomaly | Zero-flow gap > 120 s mid-delivery | MEPC.1/Circ.891 §5.3 |
 | **A05** | Reverse flow | Any `FlowDirection.REVERSE` packet during active delivery | MEPC.1/Circ.891 Annex III |
 | **A06** | Meter fault | `StreamStatusCode.FAULT` seen | MEPC.1/Circ.891 §5.3 |
@@ -82,7 +82,7 @@ Each rule = a pure function `(SessionInput) -> list[Anomaly]`. All citations and
 ### Fuel-quality physics
 | ID | Name | Trigger | Regulatory basis |
 |----|------|---------|------------------|
-| **A03** | Density deviation | `|ρ@15 − BDN| > 2 kg/m³` OR mid-session jump > 3 kg/m³ | ISO 8217:2024 Table 2 |
+| **A03** | Density deviation | abs(ρ@15 − BDN) > 2 kg/m³ OR mid-session jump > 3 kg/m³ | ISO 8217:2024 Table 2 |
 | **A07** | Meter health | Drive-gain z-score > 3σ vs baseline OR tube-freq drift > 2 % OR cal cert > 365 days | OIML R 117-1 |
 | **A08** | Sulphur non-compliance | Lab sulphur > 0.50 % global / 0.10 % ECA, no IAPP scrubber cert | MARPOL Annex VI Reg. 14 |
 | **A09** | Flash point | Lab flash < 60 °C | SOLAS II-2/4.2.1 |
@@ -109,10 +109,10 @@ Each rule = a pure function `(SessionInput) -> list[Anomaly]`. All citations and
 ### Our four advanced detectors (hackathon differentiators)
 | ID | Name | Trigger | Why it matters |
 |----|------|---------|----------------|
-| **A_CAP** | **Cappuccino bunkering** | Global-median ρ drop + drive-gain spike > 4× window median + `|Δρ@15| < 0.5` kg/m³ | Air injection — criminal in Singapore. Pure physics, no thresholds to game. |
-| **A_VEF** | **VEF anomaly** | Vessel Experience Factor `|z| > 2σ` vs ≥ 6-delivery rolling baseline | Crew-side skimming pattern (OCIMF VEF method). |
-| **A_CCAI** | **CCAI off-spec** | `CCAI = D − 140.7 · log₁₀(log₁₀(V + 0.85)) − 80.6 > 870` | Catalyst-fines poisoning, engine ignition damage (ISO 8217 §5.4). |
-| **A_ROB** | **ROB / sounding mismatch** | `|ROBafter − ROBbefore − MFM_total| > 0.3 %` | Independent ground truth disagrees with MFM → tampering or short delivery (ISGOTT 11.1). |
+| **A_CAP** | **Cappuccino bunkering** | Global-median ρ drop + drive-gain spike > 4× window median + abs(Δρ@15) < 0.5 kg/m³ | Air injection — criminal in Singapore. Pure physics, no thresholds to game. |
+| **A_VEF** | **VEF anomaly** | Vessel Experience Factor abs(z) > 2σ vs ≥ 6-delivery rolling baseline | Crew-side skimming pattern (OCIMF VEF method). |
+| **A_CCAI** | **CCAI off-spec** | CCAI = D − 140.7 · log₁₀(log₁₀(V + 0.85)) − 80.6 > 870 | Catalyst-fines poisoning, engine ignition damage (ISO 8217 §5.4). |
+| **A_ROB** | **ROB / sounding mismatch** | abs(ROBafter − ROBbefore − MFM_total) > 0.3 % | Independent ground truth disagrees with MFM → tampering or short delivery (ISGOTT 11.1). |
 
 ---
 
@@ -143,7 +143,7 @@ flowchart LR
 Sum = 1.00 (enforced in `Weights.__post_init__`).
 
 ### 5.2 Stepped commercial table — `policy/QTY_RISK_STEPS`
-| `|dev %|` ≤ | Score | Basis |
+| abs(dev %) ≤ | Score | Basis |
 |---|---|---|
 | 0.5 | 5 | Within MFM tolerance band |
 | 1.0 | 25 | Annotate; CE notify |
