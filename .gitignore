@@ -22,6 +22,8 @@ Thumbs.db
 
 # Pipeline output (regenerable)
 _other_stages/out/
+output/
+pipeline_out/
 
 # Streamlit
 .streamlit/
