@@ -1,3 +1,25 @@
+
+hshshshhssh
+
+# Copy this to .env and fill in your values.
+# Never commit .env to git.
+
+# ── Supabase ──────────────────────────────────────────────────────────────────
+# From: Supabase Dashboard → Project Settings → API
+SUPABASE_URL=https://supabase.com/dashboard/project/jdnzznxwdczcktfqwxmj
+SUPABASE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Impkbnp6bnh3ZGN6Y2t0ZnF3eG1qIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MDc1MDUxMiwiZXhwIjoyMDk2MzI2NTEyfQ.OPqryB55sxjpXnY5cGwceTe7p9AfMUB6jbzGlS4AVZ0
+
+# ── Anthropic (Stages 4-6 LLM) ───────────────────────────────────────────────
+ANTHROPIC_API_KEY=sk-ant-...
+
+# ── Ingestion defaults ────────────────────────────────────────────────────────
+BDN_DEFAULT_PORT=Singapore
+BDN_SESSION_PREFIX=SES
+
+
+shhhhh
+
+
 # BunkerGuard — Stage 2 & Stage 3
 
 > Real-time **anomaly detection** + **risk scoring** for ship-bunkering fraud.
