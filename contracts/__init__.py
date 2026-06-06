@@ -31,6 +31,7 @@ from .stage1_session_input import (
     HistoryStats,
     MeterCalibration,
     MFMPacket,
+    SessionBDN,
     SessionInput,
     SoundingRecord,
     SupplierRef,

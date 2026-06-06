@@ -5,10 +5,60 @@ All units: MT (mass), m³ (volume), kg/m³ (density), USD (money), UTC ISO-8601 
 """
 from __future__ import annotations
 
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+# ── Ingestion output type (produced by ingestion/bdn_ocr.py) ─────────────────
+
+@dataclass
+class SessionBDN:
+    """Bunker Delivery Note — 22 BDN fields extracted via OCR from a physical/PDF BDN."""
+    bdn_ref: str
+    session_id: str
+    vessel: str
+    imo: int
+    supplier: str
+    licence: str
+    barge: str
+    barge_imo: str          # alphanumeric, e.g. "0786A"
+    port: str
+    date: str               # ISO date "2026-06-10"
+    start: str              # "10:15"
+    end: Optional[str]      # None while delivery is still in progress
+    grade: str              # "VLSFO RMG 380"
+    sulphur_pct: float      # e.g. 0.47  (not a percentage string)
+    density_15c: float      # kg/m³ at 15 °C
+    viscosity_50c: float    # cSt at 50 °C
+    flash_point: float      # °C
+    qty_mt: float           # BDN-declared quantity, metric tonnes
+    sample_seal: str
+    supp_signed: bool
+    officer_signed: bool
+    biofuel_pct: float
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    def immutable_core(self) -> dict:
+        """Fields that must not change after delivery — used by the hash service."""
+        return {
+            "bdn_ref":     self.bdn_ref,
+            "imo":         self.imo,
+            "licence":     self.licence,
+            "barge_imo":   self.barge_imo,
+            "grade":       self.grade,
+            "sulphur_pct": self.sulphur_pct,
+            "density_15c": self.density_15c,
+            "flash_point": self.flash_point,
+            "qty_mt":      self.qty_mt,
+            "sample_seal": self.sample_seal,
+            "date":        self.date,
+            "start":       self.start,
+        }
 
 from .enums import (
     EBDNStatus,
