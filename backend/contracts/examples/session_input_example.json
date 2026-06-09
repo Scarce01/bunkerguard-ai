@@ -1,0 +1,90 @@
+{
+  "session_id": "SES-2026-012",
+  "port": "Singapore",
+  "start_ts": "2026-05-10T06:00:00Z",
+  "end_ts": "2026-05-10T11:45:00Z",
+  "duration_h": 5.75,
+  "vessel": {
+    "name": "MV DEMO ALPHA",
+    "imo": "9876543",
+    "evidence_source": "Equasis"
+  },
+  "barge": {
+    "name": "BG DEMO 21",
+    "imo": "9123456",
+    "mpa_licence": "MPA-BL-2025-021",
+    "evidence_source": "MPA Bunker Tankers Registry"
+  },
+  "supplier": {
+    "supplier_id": "SUP-DEMO-ALPHA",
+    "name": "BunkerGuard Demo Supplier Alpha",
+    "mpa_licence": "MPA-BS-2025-008",
+    "licence_expiry": "2026-12-31T00:00:00Z",
+    "in_mpa_registry": true,
+    "reputation_score": 42.0,
+    "total_sessions": 87,
+    "mismatch_count": 9,
+    "avg_deviation_pct": 2.4,
+    "critical_count": 2,
+    "lop_count": 3,
+    "flag": "watchlist"
+  },
+  "bdn": {
+    "bdn_ref": "BDN-2026-0012",
+    "grade": "VLSFO RMG 380",
+    "qty_mt": 510.0,
+    "density_15c_kg_m3": 985.2,
+    "viscosity_50c_cst": 320.0,
+    "sulphur_pct": 0.48,
+    "flash_point_c": 66.0,
+    "biofuel_pct": 0.0,
+    "sample_seal": "SEAL-77821",
+    "supplier_signed": true,
+    "officer_signed": true,
+    "ebdn_status": "VERIFIED",
+    "ebdn_qr_sha256": "9f2c...",
+    "start_ts": "2026-05-10T06:00:00Z",
+    "end_ts": "2026-05-10T11:45:00Z"
+  },
+  "mfm_stream": [
+    {
+      "seq_no": 1,
+      "timestamp": "2026-05-10T06:00:00Z",
+      "flow_rate_mt_h": 95.0,
+      "cumulative_mt": 0.0,
+      "density_op_kg_m3": 992.1,
+      "density_15c_kg_m3": 985.2,
+      "temp_c": 42.0,
+      "drive_gain_pct": 18.0,
+      "tube_freq_hz": 89.5,
+      "direction": "FORWARD",
+      "status_code": "OK",
+      "meter_serial": "MFM-SG-118-A",
+      "expected_mt": 0.0,
+      "deviation_pct": 0.0,
+      "packet_hmac": "aa11deadbeef..."
+    }
+  ],
+  "fuel_spec": {
+    "grade": "VLSFO RMG 380",
+    "max_density_15c_kg_m3": 991.0,
+    "max_viscosity_50c_cst": 380.0,
+    "max_sulphur_pct": 0.5,
+    "min_flash_point_c": 60.0,
+    "max_al_si_mg_kg": 60.0,
+    "max_ccai": 870.0
+  },
+  "ais": [],
+  "history": {
+    "supplier_30d_sessions": 12,
+    "supplier_30d_avg_dev_pct": 2.6,
+    "supplier_30d_critical_count": 1,
+    "similar_session_count": 3
+  },
+  "bdn_qty_mt": 510.0,
+  "mfm_qty_mt": 491.4,
+  "deviation_mt": -18.6,
+  "deviation_pct": -3.65,
+  "evidence_sha256": "f3a2...",
+  "dataset_classification": "simulated"
+}

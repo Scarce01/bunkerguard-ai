@@ -1,0 +1,6 @@
+step,action,detail,verification_status
+1,Get free API key,"Register at https://aisstream.io (free tier, no credit card) → get WebSocket API key → add to .env as AIS_API_KEY","team_provided_demo_instructions; aisstream vessel URL format returned 404 in audit, use websocket API endpoint instead"
+2,Subscribe to MMSI stream,"ws://stream.aisstream.io/v0/stream  →  subscribe with {""MessageType"":""Subscribe"",""Filters"":{""MMSI"":[""566824000"",""563057800""]}}","team_provided_demo_instructions; aisstream vessel URL format returned 404 in audit, use websocket API endpoint instead"
+3,Parse position messages,Each message has position.latitude + position.longitude + NavigationalStatus. Check distance from receiving vessel position.,"team_provided_demo_instructions; aisstream vessel URL format returned 404 in audit, use websocket API endpoint instead"
+4,Trigger A14 rule,"if distance(barge_pos, vessel_pos) > 500m for > 60 seconds → create anomaly A14 HIGH. During bunkering, vessels should be < 100m apart.","team_provided_demo_instructions; aisstream vessel URL format returned 404 in audit, use websocket API endpoint instead"
+5,Live demo,Show barge MMSI on dashboard. If barge moves away during delivery → immediate A14 alert. Very visual and real.,"team_provided_demo_instructions; aisstream vessel URL format returned 404 in audit, use websocket API endpoint instead"

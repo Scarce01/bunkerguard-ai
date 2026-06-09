@@ -1,0 +1,68 @@
+# ─── Environment / secrets ──────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+*.key
+*.pem
+secrets/
+.secrets/
+
+# ─── Node / Vite ─────────────────────────────────────────────────────────
+node_modules/
+.pnpm-store/
+.vite/
+dist/
+.next/
+.turbo/
+*.tsbuildinfo
+.cache/
+
+# ─── Python ──────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+pipeline_out/
+pip-wheel-metadata/
+
+# ─── Build artifacts ─────────────────────────────────────────────────────
+out/
+build/
+.tmp_page.html
+.tmp/
+tmp/
+
+# ─── OS / IDE ────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ─── Claude Code session state (not project content) ─────────────────────
+.claude/
+CLAUDE.md.local
+
+# ─── Logs ────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ─── Large local-only models (served from disk in dev) ───────────────────
+# Comment out if you want to commit the GLB scenery.
+*.glb.local

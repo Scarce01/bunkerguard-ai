@@ -1,0 +1,6 @@
+source_table,decision,reason
+MockDataset_1.xlsx Sessions/BDN/MFM/Anomaly/Risk/Supplier/History,not_replaced,"v2 is already cleaned, has MPA tanker MFM serials, no real-company incident leakage, and passed false-positive checks."
+MockDataset_1.xlsx DATA_SOURCES,merged_to Evidence_Sources.csv,Useful provenance context; corrected stale VLSFO price from 718 to latest fetched 865.50 USD/MT.
+MockDataset_1.xlsx REGULATORY_REFS,merged_to Regulatory_Refs.csv/Standards_Refs.csv/Fuel_Prices_Extended.csv,Good rule traceability; marked as hackathon reference where exact clauses need production verification.
+MockDataset_1.xlsx VESSELS_AIS bunker barges,merged_to Barge_AIS_References.csv as reference_only,"Names do not match v2 MPA tanker names and AIS URLs were not fully verifiable; kept for optional live demo, not joined."
+MockDataset_1.xlsx VESSELS_AIS anchorages,merged_to Anchorage_Geofences.csv,Useful for A13/A14 geofence demo; labelled approximate pending official-chart verification.

@@ -1,0 +1,292 @@
+import { useEffect, useRef, useState } from 'react';
+import { FileText, Play, RotateCcw } from 'lucide-react';
+import { EvidenceReportDrawer } from '../evidence/EvidenceReportDrawer';
+
+type AgentKey = 'surveyor' | 'investigator' | 'compliance' | 'decision' | 'chief';
+
+const AGENT_META: Record<AgentKey, { glyph: string; name: string; color: string }> = {
+  surveyor:     { glyph: 'SV', name: 'Surveyor',       color: '#2EA8FF' },
+  investigator: { glyph: 'IV', name: 'Investigator',   color: '#A36CFF' },
+  compliance:   { glyph: 'CP', name: 'Compliance',     color: '#FFB84D' },
+  decision:     { glyph: 'DC', name: 'Decision',       color: '#34C98C' },
+  chief:        { glyph: 'CE', name: 'Chief Engineer', color: '#BFD7F7' },
+};
+
+interface Message {
+  from: AgentKey;
+  to?: AgentKey;
+  kind: 'observation' | 'correlation' | 'verdict' | 'broadcast' | 'sign-off';
+  body: string;
+  payload?: { label: string; value: string; color?: string }[];
+  delayMs: number;          // delay BEFORE this message appears (gap after previous)
+}
+
+/** Scripted conversation for SES-2026-016 — MAERSK HONAM, Supplier Gamma.
+ *  Same session referenced everywhere else in the demo, so the conversation
+ *  matches the data the rest of the app already shows. */
+const TRANSCRIPT: Message[] = [
+  {
+    from: 'surveyor', to: 'investigator', kind: 'observation', delayMs: 600,
+    body: 'MFM Final reads 481.2 MT for SES-2026-016. BDN declares 500.0 MT.',
+    payload: [
+      { label: 'Δ', value: '−18.8 MT', color: '#E84E4E' },
+      { label: 'deviation', value: '3.76%', color: '#E84E4E' },
+      { label: 'AIS', value: 'in-zone · stable', color: '#34C98C' },
+    ],
+  },
+  {
+    from: 'investigator', to: 'compliance', kind: 'correlation', delayMs: 1400,
+    body: 'Cross-ref: Supplier Gamma — 9 of last 22 deliveries flagged. Pattern matches "systematic underfueling".',
+    payload: [
+      { label: 'pattern match', value: '94%', color: '#A36CFF' },
+      { label: 'prior incidents', value: '#012 · #019 · #021', color: '#7FA5D3' },
+      { label: 'Exa news', value: 'MPA notice 2026-06-10', color: '#E0A020' },
+    ],
+  },
+  {
+    from: 'compliance', to: 'decision', kind: 'verdict', delayMs: 1600,
+    body: 'MARPOL Annex VI tolerance 2.00% exceeded (actual 3.76%). ISO 8217 fuel params within spec.',
+    payload: [
+      { label: 'MARPOL', value: 'FAIL', color: '#E84E4E' },
+      { label: 'MPA tolerance', value: 'FAIL', color: '#E84E4E' },
+      { label: 'ISO 8217', value: 'PASS', color: '#34C98C' },
+    ],
+  },
+  {
+    from: 'decision', to: 'chief', kind: 'broadcast', delayMs: 1500,
+    body: 'VERDICT: REFUSE_TO_SIGN BDN. Issue Letter of Protest. Escalate to MPA. Awaiting Chief Engineer sign-off.',
+    payload: [
+      { label: 'risk score', value: '78 / 100', color: '#E84E4E' },
+      { label: 'exposure', value: 'USD 11,280', color: '#E84E4E' },
+      { label: 'action', value: 'REFUSE_TO_SIGN', color: '#E84E4E' },
+    ],
+  },
+  {
+    from: 'chief', kind: 'sign-off', delayMs: 1400,
+    body: 'Acknowledged. Sign-off held. Generating evidence package for MPA filing.',
+    payload: [
+      { label: 'evidence', value: 'compiling…', color: '#2EA8FF' },
+    ],
+  },
+];
+
+interface Props {
+  /** session_id passed to the evidence-report drawer when the CTA fires. */
+  sessionId: string;
+  /** Notify parent so the network edges can light up in sync. */
+  onActiveEdgeChange?: (edge: { from: AgentKey; to?: AgentKey } | null) => void;
+}
+
+export function AgentConversationStream({ sessionId, onActiveEdgeChange }: Props) {
+  const [visible, setVisible] = useState<number>(0);   // how many messages are revealed
+  const [done, setDone] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [toast, setToast] = useState<{ agent: AgentKey; text: string } | null>(null);
+  const timers = useRef<number[]>([]);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const clearTimers = () => { timers.current.forEach(window.clearTimeout); timers.current = []; };
+
+  const play = () => {
+    clearTimers();
+    setVisible(0);
+    setDone(false);
+    let acc = 0;
+    TRANSCRIPT.forEach((m, i) => {
+      acc += m.delayMs;
+      timers.current.push(window.setTimeout(() => {
+        setVisible(i + 1);
+        // Pop toast for the receiver
+        const receiver = m.to ?? m.from;
+        setToast({ agent: receiver, text: m.kind === 'sign-off' ? 'Signed off' : `${AGENT_META[receiver].name} received` });
+        // Light up the edge for parent
+        onActiveEdgeChange?.({ from: m.from, to: m.to });
+        // Clear toast after a beat
+        timers.current.push(window.setTimeout(() => setToast(null), 1100));
+        // Scroll to the newest message
+        timers.current.push(window.setTimeout(() => {
+          listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
+        }, 50));
+        if (i === TRANSCRIPT.length - 1) {
+          timers.current.push(window.setTimeout(() => {
+            setDone(true);
+            onActiveEdgeChange?.(null);
+          }, 800));
+        }
+      }, acc));
+    });
+  };
+
+  // Auto-play once on mount
+  useEffect(() => {
+    const t = window.setTimeout(play, 350);
+    return () => { window.clearTimeout(t); clearTimers(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div style={{
+      background: 'linear-gradient(180deg, #102033 0%, #0E1C2D 100%)',
+      border: '1px solid rgba(255,255,255,0.09)',
+      borderRadius: 10,
+      overflow: 'hidden',
+      boxShadow: '0 2px 8px rgba(0,0,0,0.35)',
+      display: 'flex',
+      flexDirection: 'column',
+      position: 'relative',
+    }}>
+      {/* Header */}
+      <div style={{ padding: '12px 18px', borderBottom: '1px solid rgba(255,255,255,0.07)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ width: 6, height: 6, borderRadius: '50%', background: done ? '#34C98C' : '#2EA8FF', animation: 'livePulse 2s ease-in-out infinite', boxShadow: `0 0 8px ${done ? '#34C98C' : '#2EA8FF'}` }} />
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#EAF4FF' }}>Agent Conversation · {sessionId}</div>
+            <div style={{ fontSize: 9, color: '#5A8AB4', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+              {done ? '5 / 5 messages · chain complete' : `${visible} / ${TRANSCRIPT.length} messages · live`}
+            </div>
+          </div>
+        </div>
+        <button
+          onClick={play}
+          style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 6, background: 'rgba(46,168,255,0.10)', border: '1px solid rgba(46,168,255,0.30)', color: '#2EA8FF', fontSize: 11, fontWeight: 700, cursor: 'pointer', transition: 'all 140ms' }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(46,168,255,0.20)'; }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(46,168,255,0.10)'; }}
+        >
+          {done ? <><RotateCcw className="w-3 h-3" />Replay</> : <><Play className="w-3 h-3" />Restart</>}
+        </button>
+      </div>
+
+      {/* Notification toast — pops over the message list */}
+      {toast && (
+        <div style={{
+          position: 'absolute', top: 56, right: 18, zIndex: 5,
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '6px 12px', borderRadius: 7,
+          background: `${AGENT_META[toast.agent].color}1C`,
+          border: `1px solid ${AGENT_META[toast.agent].color}55`,
+          boxShadow: `0 4px 16px ${AGENT_META[toast.agent].color}30`,
+          animation: 'fadeInRight 240ms ease-out',
+        }}>
+          <div style={{
+            width: 18, height: 18, borderRadius: 4,
+            background: `${AGENT_META[toast.agent].color}30`,
+            border: `1px solid ${AGENT_META[toast.agent].color}`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 9, fontWeight: 800, color: AGENT_META[toast.agent].color,
+            fontFamily: "'JetBrains Mono', monospace",
+          }}>{AGENT_META[toast.agent].glyph}</div>
+          <span style={{ fontSize: 10, fontWeight: 700, color: AGENT_META[toast.agent].color, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{toast.text}</span>
+        </div>
+      )}
+
+      {/* Message list */}
+      <div ref={listRef} style={{ padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 360, overflowY: 'auto', minHeight: 200 }}>
+        {TRANSCRIPT.slice(0, visible).map((m, i) => {
+          const from = AGENT_META[m.from];
+          const to = m.to ? AGENT_META[m.to] : null;
+          return (
+            <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 6, animation: 'fadeInUp 280ms ease-out' }}>
+              {/* Header line: SV → IV · OBSERVATION · 17:42:0X */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10 }}>
+                <span style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '2px 8px', borderRadius: 4,
+                  background: `${from.color}18`, border: `1px solid ${from.color}38`,
+                  color: from.color, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
+                }}>
+                  <span style={{ fontSize: 9 }}>{from.glyph}</span> {from.name}
+                </span>
+                {to && (
+                  <>
+                    <span style={{ color: '#4E7A9A', fontSize: 12 }}>→</span>
+                    <span style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 6,
+                      padding: '2px 8px', borderRadius: 4,
+                      background: `${to.color}18`, border: `1px solid ${to.color}38`,
+                      color: to.color, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
+                    }}>
+                      <span style={{ fontSize: 9 }}>{to.glyph}</span> {to.name}
+                    </span>
+                  </>
+                )}
+                <span style={{ marginLeft: 'auto', fontSize: 9, color: '#5A8AB4', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 700 }}>{m.kind}</span>
+              </div>
+              {/* Body text */}
+              <div style={{
+                padding: '10px 12px',
+                borderRadius: 7,
+                background: 'rgba(4,10,18,0.55)',
+                border: '1px solid rgba(255,255,255,0.05)',
+                borderLeft: `3px solid ${from.color}`,
+                fontSize: 12,
+                color: '#EAF4FF',
+                lineHeight: 1.5,
+              }}>
+                {m.body}
+                {m.payload && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+                    {m.payload.map((p, j) => (
+                      <div key={j} style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 5,
+                        padding: '3px 9px', borderRadius: 12,
+                        background: 'rgba(255,255,255,0.04)',
+                        border: '1px solid rgba(255,255,255,0.08)',
+                        fontSize: 10,
+                      }}>
+                        <span style={{ color: '#7FA5D3' }}>{p.label}:</span>
+                        <span style={{ color: p.color ?? '#BFD7F7', fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>{p.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+
+        {/* Empty / pending state */}
+        {visible === 0 && (
+          <div style={{ padding: '40px 0', textAlign: 'center', fontSize: 11, color: '#5A8AB4' }}>
+            Streaming agent conversation…
+          </div>
+        )}
+      </div>
+
+      {/* Footer — Evidence Report CTA appears after chain completes */}
+      {done && (
+        <div style={{
+          padding: '12px 18px',
+          borderTop: '1px solid rgba(255,255,255,0.07)',
+          background: 'linear-gradient(135deg, rgba(46,168,255,0.06), rgba(0,217,142,0.06))',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14,
+        }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#EAF4FF', marginBottom: 2 }}>Conversation closed · ready for evidence package</div>
+            <div style={{ fontSize: 10, color: '#7FA5D3' }}>4-agent chain produced verdict + audit trail. Generate signed PDF for MPA filing.</div>
+          </div>
+          <button
+            onClick={() => setReportOpen(true)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 7,
+              padding: '8px 16px', borderRadius: 7,
+              background: 'linear-gradient(135deg, rgba(46,168,255,0.20), rgba(0,217,142,0.20))',
+              border: '1px solid rgba(46,168,255,0.50)',
+              color: '#2EA8FF', fontSize: 11, fontWeight: 800,
+              cursor: 'pointer', whiteSpace: 'nowrap',
+              boxShadow: '0 4px 14px rgba(46,168,255,0.18)',
+              transition: 'all 160ms',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 6px 22px rgba(46,168,255,0.30)'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
+            onMouseLeave={e => { e.currentTarget.style.boxShadow = '0 4px 14px rgba(46,168,255,0.18)'; e.currentTarget.style.transform = 'translateY(0)'; }}
+          >
+            <FileText className="w-4 h-4" /> Generate Evidence Report
+          </button>
+        </div>
+      )}
+
+      {reportOpen && (
+        <EvidenceReportDrawer sessionId={sessionId} open={reportOpen} onClose={() => setReportOpen(false)} />
+      )}
+    </div>
+  );
+}

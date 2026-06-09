@@ -1,0 +1,40 @@
+{
+  "session_id": "SES-2026-012",
+  "generated_at": "2026-05-10T12:00:05Z",
+  "anomalies": [
+    {
+      "anomaly_id": "ANO-2026-031",
+      "session_id": "SES-2026-012",
+      "rule": "A02",
+      "rule_name": "Quantity shortfall exceeds tolerance",
+      "severity": "CRITICAL",
+      "timestamp": "2026-05-10T11:46:00Z",
+      "measured": 491.4,
+      "reference": 510.0,
+      "deviation_value": -18.6,
+      "deviation_pct": -3.65,
+      "unit": "MT",
+      "description": "MFM-measured quantity is 3.65% below BDN declaration (threshold 3%).",
+      "evidence_refs": [
+        {"type": "MFM_PACKET", "ref": "MFM-SG-118-A:seq=170", "detail": "final cumulative"},
+        {"type": "BDN_DOC",    "ref": "BDN-2026-0012"}
+      ],
+      "confidence": 0.97,
+      "acknowledged": false,
+      "resolved": false
+    }
+  ],
+  "data_quality": {
+    "mfm_coverage_pct": 100.0,
+    "bdn_completeness_pct": 100.0,
+    "ebdn_status": "VERIFIED",
+    "ais_status": "REFERENCE_ONLY",
+    "insufficient_data": false,
+    "reasons": []
+  },
+  "critical_count": 1,
+  "high_count": 0,
+  "medium_count": 0,
+  "low_count": 0,
+  "debug": {}
+}

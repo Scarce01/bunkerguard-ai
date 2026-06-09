@@ -1,0 +1,5 @@
+grade,price_usd_per_mt,source,update_frequency,verification_status
+VLSFO (0.50%S RMG 380),865.50,Ship & Bunker Singapore — https://shipandbunker.com/prices/apac/sea/sg-sin-singapore,Daily,verified_live_vlsfo
+HSFO (3.50%S RMG 380),545.00,Ship & Bunker Singapore (estimated proportional),Daily,team_estimate_reference
+MGO / DMA (0.50%S),785.00,Ship & Bunker Singapore,Daily,team_estimate_reference
+Bio-VLSFO B24,780,Integr8 Fuels / MPA bunker statistics (estimated),Weekly,team_estimate_reference

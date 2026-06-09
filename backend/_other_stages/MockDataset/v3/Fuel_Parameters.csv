@@ -1,0 +1,10 @@
+Grade,Category,"Max Density
+(kg/m³)","Max Viscosity
+50°C (cSt)",Max Sulphur %,"Min Flash Pt
+(°C)","Max Al+Si
+(mg/kg)",Max CCAI,Notes
+VLSFO RMG 380,Residual,991.0,380.0,0.50%,60°C,60,870,Primary fuel under IMO 2020 sulphur cap. Most common Singapore grade.
+HSFO RMG 380,Residual,991.0,380.0,3.50%,60°C,60,870,High sulphur fuel oil. Permitted only with approved scrubber (EGCS).
+RME 180,Residual,991.0,180.0,0.50%,60°C,60,870,Lower viscosity residual. Common for smaller engines.
+DMA (MGO),Distillate,890.0,6.0,0.50%,60°C,25,N/A,Marine Gas Oil. Used in ECAs and low-load operations.
+DMB (MGO),Distillate,900.0,11.0,1.50%,60°C,25,N/A,Marine Diesel. Higher sulphur variant. Restricted to non-ECA zones.
