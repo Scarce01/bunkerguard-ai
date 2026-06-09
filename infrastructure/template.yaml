@@ -21,6 +21,13 @@ Parameters:
     Type: String
     Default: ""
     NoEcho: true
+  OpenRouterApiKey:
+    Type: String
+    Default: ""
+    NoEcho: true
+  OpenRouterModel:
+    Type: String
+    Default: anthropic/claude-sonnet-4.6
   CorsOrigin:
     Type: String
     Default: https://bunkerguard-ai.vercel.app
@@ -98,6 +105,8 @@ Resources:
           SUPABASE_SERVICE_ROLE_KEY: !Ref SupabaseServiceRoleKey
           S3_BUCKET: !Ref EvidenceBucket
           ANTHROPIC_API_KEY: !Ref AnthropicApiKey
+          OPENROUTER_API_KEY: !Ref OpenRouterApiKey
+          OPENROUTER_MODEL: !Ref OpenRouterModel
           CORS_ORIGIN: !Ref CorsOrigin
 
   HttpApi:

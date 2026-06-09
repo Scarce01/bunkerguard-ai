@@ -72,6 +72,8 @@ AWS_DEFAULT_REGION="$REGION" aws cloudformation deploy \
     "SupabaseUrl=$SUPABASE_URL" \
     "SupabaseServiceRoleKey=$SUPABASE_SERVICE_ROLE_KEY" \
     "AnthropicApiKey=${ANTHROPIC_API_KEY:-}" \
+    "OpenRouterApiKey=${OPENROUTER_API_KEY:-}" \
+    "OpenRouterModel=${OPENROUTER_MODEL:-anthropic/claude-sonnet-4.6}" \
     "CorsOrigin=${CORS_ORIGIN:-https://bunkerguard-ai.vercel.app}"
 
 AWS_DEFAULT_REGION="$REGION" aws cloudformation describe-stacks \

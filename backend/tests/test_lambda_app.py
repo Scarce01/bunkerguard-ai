@@ -42,6 +42,8 @@ def test_run_session_reuses_stage2_and_stage3() -> None:
 def test_copilot_provider_response_shape() -> None:
     provider_response = {
         "text": "Refuse to sign.",
+        "provider_used": "bedrock",
+        "model": "test-model",
         "provider": "bedrock",
         "model_id": "test-model",
         "_usage": {"input_tokens": 1, "output_tokens": 2},
@@ -57,6 +59,8 @@ def test_copilot_provider_response_shape() -> None:
         )
     body = json.loads(response["body"])
     assert response["statusCode"] == 200
+    assert body["provider_used"] == "bedrock"
+    assert body["model"] == "test-model"
     assert body["provider"] == "bedrock"
     assert body["modelId"] == "test-model"
 
@@ -64,6 +68,8 @@ def test_copilot_provider_response_shape() -> None:
 def test_copilot_ai_sdk_text_stream_shape() -> None:
     provider_response = {
         "text": "Refuse to sign.",
+        "provider_used": "bedrock",
+        "model": "test-model",
         "provider": "bedrock",
         "model_id": "test-model",
         "_usage": {"input_tokens": 1, "output_tokens": 2},

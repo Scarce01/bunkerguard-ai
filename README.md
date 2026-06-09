@@ -393,7 +393,9 @@ POST /api/evidence-report
 `/api/run-session` validates `SessionInput`, calls the existing
 `anomaly.run()` and `risk.run()` implementations, and stores the full
 evidence package in S3. `/api/copilot` and `/api/evidence-report` resolve
-the model through `LLM_PROVIDER`. Generated reports are stored under
+the model through `LLM_PROVIDER`. If Bedrock returns
+`AccessDeniedException`, the shared LLM client automatically retries through
+OpenRouter. Generated reports are stored under
 `generated-reports/`; session evidence is stored under
 `evidence-packages/`. The same bucket can also use an `uploads/` prefix for
 BDN files.
@@ -409,8 +411,23 @@ SUPABASE_URL=https://PROJECT.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=...
 S3_BUCKET=<created by CloudFormation>
 ANTHROPIC_API_KEY=... # optional fallback for LLM_PROVIDER=anthropic
+OPENROUTER_API_KEY=... # Bedrock AccessDeniedException fallback
+OPENROUTER_MODEL=anthropic/claude-sonnet-4.6
 CORS_ORIGIN=https://bunkerguard-ai.vercel.app
 ```
+
+Copilot and evidence-report JSON responses include the provider that actually
+served the request:
+
+```json
+{
+  "provider_used": "openrouter",
+  "model": "anthropic/claude-sonnet-4.6"
+}
+```
+
+The OpenRouter key is passed to CloudFormation as a `NoEcho` parameter and is
+only exposed to the Lambda runtime. It is not stored in the repository.
 
 Find an available Anthropic model before deployment:
 
@@ -429,6 +446,8 @@ export BEDROCK_MODEL_ID='us.anthropic.claude-sonnet-4-20250514-v1:0'
 export EXA_API_KEY='...' # omit only if Exa is not configured
 export SUPABASE_URL='...'
 export SUPABASE_SERVICE_ROLE_KEY='...'
+export OPENROUTER_API_KEY='...'
+export OPENROUTER_MODEL='anthropic/claude-sonnet-4.6'
 export CORS_ORIGIN='https://bunkerguard-ai.vercel.app'
 ./infrastructure/deploy.sh
 ```

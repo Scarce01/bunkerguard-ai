@@ -10,7 +10,8 @@
   small wrapper for JSON-parse errors only.
 
 Env:
-    LLM_PROVIDER, AWS_REGION, BEDROCK_MODEL_ID, ANTHROPIC_API_KEY.
+    LLM_PROVIDER, AWS_REGION, BEDROCK_MODEL_ID, ANTHROPIC_API_KEY,
+    OPENROUTER_API_KEY, OPENROUTER_MODEL.
 """
 from __future__ import annotations
 
@@ -18,6 +19,8 @@ import json
 import logging
 import os
 from typing import Any, Optional
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 
 try:
     import anthropic
@@ -29,6 +32,8 @@ except ImportError:  # allow imports in environments without the SDK
 log = logging.getLogger("bunkerguard.llm")
 
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+OPENROUTER_MODEL = "anthropic/claude-sonnet-4.6"
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 MAX_TOKENS = 4096
 JSON_RETRIES = 2  # JSON-parse-error retries only; SDK handles network retries
 
@@ -133,8 +138,14 @@ def _bedrock_model_id() -> str:
 
 def _usage_dict(usage: Any, model: str, provider: str) -> dict[str, Any]:
     if isinstance(usage, dict):
-        input_tokens = usage.get("inputTokens", usage.get("input_tokens", 0))
-        output_tokens = usage.get("outputTokens", usage.get("output_tokens", 0))
+        input_tokens = usage.get(
+            "inputTokens",
+            usage.get("input_tokens", usage.get("prompt_tokens", 0)),
+        )
+        output_tokens = usage.get(
+            "outputTokens",
+            usage.get("output_tokens", usage.get("completion_tokens", 0)),
+        )
     else:
         input_tokens = getattr(usage, "input_tokens", 0)
         output_tokens = getattr(usage, "output_tokens", 0)
@@ -144,6 +155,100 @@ def _usage_dict(usage: Any, model: str, provider: str) -> dict[str, Any]:
         "model": model,
         "provider": provider,
     }
+
+
+def _provider_result(
+    text: str,
+    model: str,
+    provider: str,
+    usage: Any,
+) -> dict[str, Any]:
+    return {
+        "text": text,
+        "provider_used": provider,
+        "model": model,
+        # Preserve the original fields for existing frontend and backend callers.
+        "provider": provider,
+        "model_id": model,
+        "_usage": _usage_dict(usage, model, provider),
+    }
+
+
+def _is_access_denied(exc: Exception) -> bool:
+    try:
+        from botocore.exceptions import ClientError
+    except ImportError:
+        return False
+    return (
+        isinstance(exc, ClientError)
+        and exc.response.get("Error", {}).get("Code") == "AccessDeniedException"
+    )
+
+
+def _call_openrouter(
+    system_prompt: str,
+    messages: list[dict[str, str]],
+    *,
+    max_tokens: int,
+) -> dict[str, Any]:
+    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "Bedrock access was denied and OPENROUTER_API_KEY is not configured"
+        )
+
+    model = os.environ.get("OPENROUTER_MODEL", OPENROUTER_MODEL).strip()
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            *[
+                {"role": message["role"], "content": message.get("content", "")}
+                for message in messages
+                if message.get("role") in {"user", "assistant"}
+            ],
+        ],
+        "max_tokens": max_tokens,
+        "temperature": 0.1,
+    }
+    req = urllib_request.Request(
+        os.environ.get("OPENROUTER_BASE_URL", OPENROUTER_URL),
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": os.environ.get(
+                "OPENROUTER_SITE_URL", "https://bunkerguard-ai.vercel.app"
+            ),
+            "X-Title": "BunkerGuard AI",
+        },
+        method="POST",
+    )
+    try:
+        with urllib_request.urlopen(req, timeout=90) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except urllib_error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:500]
+        raise RuntimeError(
+            f"OpenRouter request failed with HTTP {exc.code}: {detail}"
+        ) from exc
+
+    choices = data.get("choices") or []
+    if not choices:
+        raise RuntimeError("OpenRouter returned no response choices")
+    content = choices[0].get("message", {}).get("content", "")
+    if isinstance(content, list):
+        content = "".join(
+            part.get("text", "")
+            for part in content
+            if isinstance(part, dict) and part.get("type") == "text"
+        )
+    return _provider_result(
+        str(content).strip(),
+        model,
+        "openrouter",
+        data.get("usage", {}),
+    )
 
 
 def call_text(
@@ -157,27 +262,37 @@ def call_text(
 
     if provider == "bedrock":
         model_id = _bedrock_model_id()
-        response = _get_bedrock_client().converse(
-            modelId=model_id,
-            system=[{"text": system_prompt}],
-            messages=[
-                {
-                    "role": message["role"],
-                    "content": [{"text": message.get("content", "")}],
-                }
-                for message in messages
-                if message.get("role") in {"user", "assistant"}
-            ],
-            inferenceConfig={"maxTokens": max_tokens, "temperature": 0.1},
-        )
+        try:
+            response = _get_bedrock_client().converse(
+                modelId=model_id,
+                system=[{"text": system_prompt}],
+                messages=[
+                    {
+                        "role": message["role"],
+                        "content": [{"text": message.get("content", "")}],
+                    }
+                    for message in messages
+                    if message.get("role") in {"user", "assistant"}
+                ],
+                inferenceConfig={"maxTokens": max_tokens, "temperature": 0.1},
+            )
+        except Exception as exc:
+            if not _is_access_denied(exc):
+                raise
+            log.warning(
+                "bedrock_access_denied_falling_back",
+                extra={"model": model_id, "fallback_provider": "openrouter"},
+            )
+            return _call_openrouter(
+                system_prompt,
+                messages,
+                max_tokens=max_tokens,
+            )
         blocks = response.get("output", {}).get("message", {}).get("content", [])
         text = "".join(block.get("text", "") for block in blocks if "text" in block).strip()
-        return {
-            "text": text,
-            "provider": "bedrock",
-            "model_id": model_id,
-            "_usage": _usage_dict(response.get("usage", {}), model_id, "bedrock"),
-        }
+        return _provider_result(
+            text, model_id, "bedrock", response.get("usage", {})
+        )
 
     client = _get_client()
     response = client.messages.create(
@@ -195,12 +310,8 @@ def call_text(
         for block in response.content
         if getattr(block, "type", None) == "text"
     ).strip()
-    return {
-        "text": text,
-        "provider": "anthropic",
-        "model_id": getattr(response, "model", ANTHROPIC_MODEL),
-        "_usage": _usage_dict(response.usage, ANTHROPIC_MODEL, "anthropic"),
-    }
+    model = getattr(response, "model", ANTHROPIC_MODEL)
+    return _provider_result(text, model, "anthropic", response.usage)
 
 
 def call_claude(

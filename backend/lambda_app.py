@@ -95,6 +95,8 @@ def _copilot(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "ok": True,
         "text": result["text"],
+        "provider_used": result["provider_used"],
+        "model": result["model"],
         "provider": result["provider"],
         "modelId": result["model_id"],
         "usage": result["_usage"],
@@ -121,6 +123,8 @@ def _evidence_report(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "ok": True,
         "report": report,
+        "provider_used": report.get("_usage", {}).get("provider"),
+        "model": report.get("_usage", {}).get("model"),
         "hashed_at": hashed_at,
         "anchored": False,
         "anchor_tx": None,
@@ -145,6 +149,12 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
                     "region": os.environ.get("AWS_REGION"),
                     "s3_bucket": os.environ.get("S3_BUCKET"),
                     "exa_configured": bool(os.environ.get("EXA_API_KEY")),
+                    "openrouter_configured": bool(
+                        os.environ.get("OPENROUTER_API_KEY")
+                    ),
+                    "openrouter_model": os.environ.get(
+                        "OPENROUTER_MODEL", "anthropic/claude-sonnet-4.6"
+                    ),
                 },
             )
         if method == "POST" and path == "/api/run-session":
