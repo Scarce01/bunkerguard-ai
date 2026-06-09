@@ -26,13 +26,9 @@ import urllib.error
 
 
 SB_URL = "https://jdnzznxwdczcktfqwxmj.supabase.co"
-SB_KEY = (
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
-    "eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Impkbnp6bnh3ZGN6Y2t0ZnF3eG1qIiwicm9sZSI6InNlcnZpY2VfcmsbGUiLCJpYXQiOjE3ODA3NTA1MTIsImV4cCI6MjA5NjMyNjUxMn0."
-    "OPqryB55sxjpXnY5cGwceTe7p9AfMUB6jbzGlS4AVZ0"
-)
-# Fix: the JWT we have is the original — let env var override
-SB_KEY = os.environ.get("SUPABASE_KEY", SB_KEY)
+SB_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_KEY")
+if not SB_KEY:
+    raise RuntimeError("Set SUPABASE_SERVICE_ROLE_KEY before running this seed")
 
 
 SESSION_ID = "SES-2026-016"

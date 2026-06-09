@@ -1,0 +1,177 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: BunkerGuard AI Lambda, HTTP API, Bedrock permissions, and S3 storage.
+
+Parameters:
+  DeploymentBucket:
+    Type: String
+  DeploymentKey:
+    Type: String
+  BedrockModelId:
+    Type: String
+  ExaApiKey:
+    Type: String
+    Default: ""
+    NoEcho: true
+  SupabaseUrl:
+    Type: String
+  SupabaseServiceRoleKey:
+    Type: String
+    NoEcho: true
+  AnthropicApiKey:
+    Type: String
+    Default: ""
+    NoEcho: true
+  CorsOrigin:
+    Type: String
+    Default: https://bunkerguard-ai.vercel.app
+
+Resources:
+  EvidenceBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: RetainHackathonEvidence
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 90
+      VersioningConfiguration:
+        Status: Enabled
+
+  BackendRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: BunkerGuardRuntimeAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: !Sub ${EvidenceBucket.Arn}/*
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !GetAtt EvidenceBucket.Arn
+
+  BackendFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.12
+      Architectures:
+        - x86_64
+      Handler: lambda_app.handler
+      Role: !GetAtt BackendRole.Arn
+      MemorySize: 1024
+      Timeout: 120
+      Code:
+        S3Bucket: !Ref DeploymentBucket
+        S3Key: !Ref DeploymentKey
+      Environment:
+        Variables:
+          LLM_PROVIDER: bedrock
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+          EXA_API_KEY: !Ref ExaApiKey
+          SUPABASE_URL: !Ref SupabaseUrl
+          SUPABASE_SERVICE_ROLE_KEY: !Ref SupabaseServiceRoleKey
+          S3_BUCKET: !Ref EvidenceBucket
+          ANTHROPIC_API_KEY: !Ref AnthropicApiKey
+          CORS_ORIGIN: !Ref CorsOrigin
+
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: bunkerguard-ai
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - !Ref CorsOrigin
+        AllowHeaders:
+          - content-type
+          - authorization
+          - x-bunkerguard-stream
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+
+  BackendIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt BackendFunction.Arn
+      PayloadFormatVersion: "2.0"
+
+  HealthRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /health
+      Target: !Sub integrations/${BackendIntegration}
+
+  RunSessionRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /api/run-session
+      Target: !Sub integrations/${BackendIntegration}
+
+  CopilotRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /api/copilot
+      Target: !Sub integrations/${BackendIntegration}
+
+  EvidenceReportRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /api/evidence-report
+      Target: !Sub integrations/${BackendIntegration}
+
+  DefaultStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: $default
+      AutoDeploy: true
+
+  InvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref BackendFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*
+
+Outputs:
+  ApiBaseUrl:
+    Value: !Sub https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com
+  EvidenceBucketName:
+    Value: !Ref EvidenceBucket
+  LambdaFunctionName:
+    Value: !Ref BackendFunction

@@ -1,20 +1,22 @@
-"""Base Claude API client for BunkerGuard.
+"""Provider-switching Claude client for BunkerGuard.
 
-- Model: claude-sonnet-4-6 (per hackathon brief — fast + cheap)
+- ``LLM_PROVIDER=anthropic`` uses the Anthropic SDK.
+- ``LLM_PROVIDER=bedrock`` uses boto3 Bedrock Runtime.
 - Structured JSON enforced via ``output_config.format`` when a schema is given,
-  otherwise fenced-JSON parsing as a fallback.
+  where supported, otherwise fenced-JSON parsing as a fallback.
 - Prompt caching on the system prompt (the big static one is ~2KB and reused
   across every session; one breakpoint saves ~90% on subsequent reads).
 - Anthropic SDK auto-retries 429/5xx with exponential backoff; we add a
   small wrapper for JSON-parse errors only.
 
 Env:
-    ANTHROPIC_API_KEY — required.
+    LLM_PROVIDER, AWS_REGION, BEDROCK_MODEL_ID, ANTHROPIC_API_KEY.
 """
 from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any, Optional
 
 try:
@@ -26,7 +28,7 @@ except ImportError:  # allow imports in environments without the SDK
 
 log = logging.getLogger("bunkerguard.llm")
 
-MODEL = "claude-sonnet-4-6"
+ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 MAX_TOKENS = 4096
 JSON_RETRIES = 2  # JSON-parse-error retries only; SDK handles network retries
 
@@ -41,6 +43,7 @@ _UNSUPPORTED_CONSTRAINTS = (
 )
 
 _client: Optional[Any] = None
+_bedrock_client: Optional[Any] = None
 
 
 def _sanitize_schema(node: Any) -> Any:
@@ -104,6 +107,102 @@ def _get_client() -> Any:
     return _client
 
 
+def _provider() -> str:
+    provider = os.environ.get("LLM_PROVIDER", "anthropic").strip().lower()
+    if provider not in {"anthropic", "bedrock"}:
+        raise RuntimeError("LLM_PROVIDER must be 'anthropic' or 'bedrock'")
+    return provider
+
+
+def _get_bedrock_client() -> Any:
+    global _bedrock_client
+    if _bedrock_client is None:
+        import boto3
+
+        region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
+        _bedrock_client = boto3.client("bedrock-runtime", region_name=region)
+    return _bedrock_client
+
+
+def _bedrock_model_id() -> str:
+    model_id = os.environ.get("BEDROCK_MODEL_ID", "").strip()
+    if not model_id:
+        raise RuntimeError("BEDROCK_MODEL_ID is required when LLM_PROVIDER=bedrock")
+    return model_id
+
+
+def _usage_dict(usage: Any, model: str, provider: str) -> dict[str, Any]:
+    if isinstance(usage, dict):
+        input_tokens = usage.get("inputTokens", usage.get("input_tokens", 0))
+        output_tokens = usage.get("outputTokens", usage.get("output_tokens", 0))
+    else:
+        input_tokens = getattr(usage, "input_tokens", 0)
+        output_tokens = getattr(usage, "output_tokens", 0)
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "model": model,
+        "provider": provider,
+    }
+
+
+def call_text(
+    system_prompt: str,
+    messages: list[dict[str, str]],
+    *,
+    max_tokens: int = 800,
+) -> dict[str, Any]:
+    """Return a plain-text chat response using the selected provider."""
+    provider = _provider()
+
+    if provider == "bedrock":
+        model_id = _bedrock_model_id()
+        response = _get_bedrock_client().converse(
+            modelId=model_id,
+            system=[{"text": system_prompt}],
+            messages=[
+                {
+                    "role": message["role"],
+                    "content": [{"text": message.get("content", "")}],
+                }
+                for message in messages
+                if message.get("role") in {"user", "assistant"}
+            ],
+            inferenceConfig={"maxTokens": max_tokens, "temperature": 0.1},
+        )
+        blocks = response.get("output", {}).get("message", {}).get("content", [])
+        text = "".join(block.get("text", "") for block in blocks if "text" in block).strip()
+        return {
+            "text": text,
+            "provider": "bedrock",
+            "model_id": model_id,
+            "_usage": _usage_dict(response.get("usage", {}), model_id, "bedrock"),
+        }
+
+    client = _get_client()
+    response = client.messages.create(
+        model=ANTHROPIC_MODEL,
+        max_tokens=max_tokens,
+        system=system_prompt,
+        messages=[
+            {"role": message["role"], "content": message.get("content", "")}
+            for message in messages
+            if message.get("role") in {"user", "assistant"}
+        ],
+    )
+    text = "".join(
+        block.text
+        for block in response.content
+        if getattr(block, "type", None) == "text"
+    ).strip()
+    return {
+        "text": text,
+        "provider": "anthropic",
+        "model_id": getattr(response, "model", ANTHROPIC_MODEL),
+        "_usage": _usage_dict(response.usage, ANTHROPIC_MODEL, "anthropic"),
+    }
+
+
 def call_claude(
     system_prompt: str,
     user_prompt: str,
@@ -127,6 +226,40 @@ def call_claude(
         Parsed JSON object plus a ``_usage`` key with token counts. On any
         unrecoverable failure, returns ``{"error": <msg>, "_usage": {...}}``.
     """
+    provider = _provider()
+
+    if provider == "bedrock":
+        schema_instruction = ""
+        if json_schema is not None:
+            schema_instruction = (
+                "\n\nReturn only JSON matching this schema:\n"
+                + json.dumps(_sanitize_schema(json_schema), separators=(",", ":"))
+            )
+        messages = [{"role": "user", "content": user_prompt + schema_instruction}]
+        last_text: Optional[str] = None
+        last_usage: dict[str, Any] = {}
+        for attempt in range(JSON_RETRIES + 1):
+            try:
+                response = call_text(
+                    system_prompt,
+                    messages,
+                    max_tokens=max_tokens,
+                )
+            except Exception as exc:
+                log.exception("bedrock_call_failed")
+                return {"error": f"{type(exc).__name__}: {exc}", "_usage": {}}
+            last_text = response["text"]
+            last_usage = response["_usage"]
+            parsed = _try_parse_json(last_text)
+            if parsed is not None:
+                parsed["_usage"] = last_usage
+                return parsed
+            log.warning(
+                "json_parse_failed",
+                extra={"attempt": attempt, "preview": last_text[:200]},
+            )
+        return {"error": "JSON parse failed", "raw": last_text, "_usage": last_usage}
+
     client = _get_client()
 
     system_block: list[dict[str, Any]] = [{"type": "text", "text": system_prompt}]
@@ -134,7 +267,7 @@ def call_claude(
         system_block[0]["cache_control"] = {"type": "ephemeral"}
 
     kwargs: dict[str, Any] = {
-        "model": MODEL,
+        "model": ANTHROPIC_MODEL,
         "max_tokens": max_tokens,
         "system": system_block,
         "messages": [{"role": "user", "content": user_prompt}],
@@ -162,7 +295,8 @@ def call_claude(
             "output_tokens": response.usage.output_tokens,
             "cache_read_input_tokens": getattr(response.usage, "cache_read_input_tokens", 0),
             "cache_creation_input_tokens": getattr(response.usage, "cache_creation_input_tokens", 0),
-            "model": MODEL,
+            "model": ANTHROPIC_MODEL,
+            "provider": "anthropic",
         }
 
         parsed = _try_parse_json(text)

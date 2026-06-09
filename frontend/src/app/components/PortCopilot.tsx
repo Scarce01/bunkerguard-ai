@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useChat } from '@ai-sdk/react';
+import { TextStreamChatTransport } from 'ai';
 import { Bot, Send, Sparkles, X, Command } from 'lucide-react';
 import { useCopilotContext } from '../../lib/useCopilotContext';
+import { apiUrl } from '../../lib/api';
 
 const RAIL_WIDTH_PX = 380;
 const OVERLAY_BREAKPOINT_PX = 1100;
-
-interface ChatMsg { role: 'user' | 'assistant'; content: string; }
 
 const SUGGESTIONS = [
   'What is the worst session right now?',
@@ -18,13 +19,18 @@ const SYSTEM_PROMPT = `You are BunkerGuard Copilot, an assistant for a Chief Eng
 
 export function PortCopilot() {
   const [open, setOpen] = useState(false);
-  const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [providerLabel, setProviderLabel] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const { text: contextText, loading: ctxLoading } = useCopilotContext();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const transport = useMemo(
+    () => new TextStreamChatTransport({
+      api: apiUrl('/api/copilot'),
+      headers: { 'X-BunkerGuard-Stream': 'text' },
+    }),
+    [],
+  );
+  const { messages, sendMessage, status, error } = useChat({ transport });
+  const busy = status === 'submitted' || status === 'streaming';
 
   // Rail vs overlay — wide viewports push content left; small viewports overlay
   // so the dashboard isn't crushed.
@@ -71,35 +77,9 @@ export function PortCopilot() {
   async function send(prompt: string) {
     const text = prompt.trim();
     if (!text || busy) return;
-    setError(null);
-    const next: ChatMsg[] = [...messages, { role: 'user', content: text }];
-    setMessages(next);
     setInput('');
-    setBusy(true);
-
-    try {
-      const sys = `${SYSTEM_PROMPT}\n\n## CONTEXT — live Supabase snapshot\n${contextText}`;
-      const res = await fetch('/api/copilot', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ system: sys, messages: next, maxTokens: 700 }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body?.error ?? `proxy ${res.status}`);
-      }
-      const data = await res.json();
-      setProviderLabel(data?.provider ?? null);
-      setMessages([...next, { role: 'assistant', content: data.text ?? '(empty)' }]);
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
-      setMessages([...next, {
-        role: 'assistant',
-        content: '⚠ Copilot proxy unavailable — set ANTHROPIC_API_KEY in your environment and restart Vite. Falling back to the live context snapshot only.',
-      }]);
-    } finally {
-      setBusy(false);
-    }
+    const system = `${SYSTEM_PROMPT}\n\n## CONTEXT — live Supabase snapshot\n${contextText}`;
+    await sendMessage({ text }, { body: { system, maxTokens: 700 } });
   }
 
   if (!open) {
@@ -184,7 +164,7 @@ export function PortCopilot() {
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: '#E5F2FF' }}>BunkerGuard Copilot</div>
           <div style={{ fontSize: 9, color: '#7FA5D3', letterSpacing: 0.6 }}>
-            {providerLabel ?? 'Provider: Anthropic / AWS Bedrock (swappable)'}
+            Vercel AI SDK · AWS Bedrock
             {ctxLoading ? ' · loading context…' : ` · ${contextText.length} chars context`}
           </div>
         </div>
@@ -244,8 +224,8 @@ export function PortCopilot() {
           </>
         )}
 
-        {messages.map((m, i) => (
-          <div key={i} style={{
+        {messages.map((m) => (
+          <div key={m.id} style={{
             alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start',
             maxWidth: '88%',
             padding: '8px 12px',
@@ -256,7 +236,9 @@ export function PortCopilot() {
             color: '#E5F2FF',
             whiteSpace: 'pre-wrap',
           }}>
-            {m.content}
+            {m.parts.map((part, index) =>
+              part.type === 'text' ? <span key={`${m.id}-${index}`}>{part.text}</span> : null,
+            )}
           </div>
         ))}
 
@@ -277,7 +259,7 @@ export function PortCopilot() {
 
         {error && (
           <div style={{ fontSize: 10, color: '#FF7B7B', padding: '4px 0' }}>
-            {error}
+            {error.message}
           </div>
         )}
       </div>

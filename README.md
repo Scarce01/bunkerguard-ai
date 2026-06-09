@@ -99,6 +99,10 @@ bunkerguard-ai/
 │   ├── tests/                      # pytest — deterministic, no I/O
 │   └── README.md                   # Deep dive on Stage 2 & 3 deterministic core
 │
+├── infrastructure/
+│   ├── template.yaml               # Lambda, HTTP API, IAM, Bedrock, S3
+│   └── deploy.sh                   # Builds a Linux Lambda zip and deploys the stack
+│
 ├── .env.example                    # Linked from each subdir's own example
 ├── .gitignore
 └── README.md                       # ← you are here
@@ -333,6 +337,142 @@ plugins: [
 around `backend/llm/evidence_report_service.generate_evidence_report()`,
 adding SHA-256 hashing and a mock Ethereum anchor tx before persisting
 (or surfacing the failure if `evidence_reports` is not yet provisioned).
+
+---
+
+## Cloud deployment
+
+### Frontend: Vercel
+
+Production URL: <https://bunkerguard-ai.vercel.app>
+
+The Vercel project must use:
+
+| Setting | Value |
+|---|---|
+| Root Directory | `frontend` |
+| Framework | `Vite` |
+| Install Command | `npm ci` |
+| Build Command | `npm run build` |
+| Output Directory | `dist` |
+
+`frontend/vercel.json` contains the SPA rewrite so routes such as `/live`,
+`/sessions/:id`, and `/evidence` resolve to `index.html`.
+
+Required Vercel variables:
+
+```text
+VITE_API_BASE_URL=https://API_ID.execute-api.us-west-2.amazonaws.com
+VITE_SUPABASE_URL=https://PROJECT.supabase.co
+VITE_SUPABASE_ANON_KEY=...
+```
+
+Deploy:
+
+```bash
+npx vercel link --yes --scope cicis-projects-074e9070 --project bunkerguard-ai
+npx vercel deploy --prod --yes
+```
+
+The Port Copilot uses Vercel AI SDK 6 (`useChat` +
+`TextStreamChatTransport`) in `frontend/src/app/components/PortCopilot.tsx`.
+The transport calls the AWS API Gateway endpoint directly. Inference still
+runs only in Lambda/Bedrock; Vercel does not hold AWS or model credentials.
+
+### Backend: AWS
+
+Production uses one Python 3.12 Lambda behind an API Gateway HTTP API:
+
+```text
+GET  /health
+POST /api/run-session
+POST /api/copilot
+POST /api/evidence-report
+```
+
+`/api/run-session` validates `SessionInput`, calls the existing
+`anomaly.run()` and `risk.run()` implementations, and stores the full
+evidence package in S3. `/api/copilot` and `/api/evidence-report` resolve
+the model through `LLM_PROVIDER`. Generated reports are stored under
+`generated-reports/`; session evidence is stored under
+`evidence-packages/`. The same bucket can also use an `uploads/` prefix for
+BDN files.
+
+Required backend variables:
+
+```text
+LLM_PROVIDER=bedrock
+AWS_REGION=us-west-2
+BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-20250514-v1:0
+EXA_API_KEY=... # required only when Exa enrichment is enabled
+SUPABASE_URL=https://PROJECT.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=...
+S3_BUCKET=<created by CloudFormation>
+ANTHROPIC_API_KEY=... # optional fallback for LLM_PROVIDER=anthropic
+CORS_ORIGIN=https://bunkerguard-ai.vercel.app
+```
+
+Find an available Anthropic model before deployment:
+
+```bash
+AWS_DEFAULT_REGION=us-west-2 aws bedrock list-inference-profiles \
+  --type-equals SYSTEM_DEFINED \
+  --query 'inferenceProfileSummaries[?contains(inferenceProfileId, `claude-sonnet-4`)].[inferenceProfileId,inferenceProfileName]' \
+  --output table
+```
+
+Deploy:
+
+```bash
+export AWS_REGION=us-west-2
+export BEDROCK_MODEL_ID='us.anthropic.claude-sonnet-4-20250514-v1:0'
+export EXA_API_KEY='...' # omit only if Exa is not configured
+export SUPABASE_URL='...'
+export SUPABASE_SERVICE_ROLE_KEY='...'
+export CORS_ORIGIN='https://bunkerguard-ai.vercel.app'
+./infrastructure/deploy.sh
+```
+
+The script builds manylinux x86_64 dependencies, uploads the Lambda zip to
+a deployment bucket, deploys `infrastructure/template.yaml`, and prints the
+API Gateway URL, evidence bucket, and Lambda function name.
+
+Set the printed API URL in Vercel and redeploy:
+
+```bash
+printf '%s' "$API_BASE_URL" | npx vercel env add VITE_API_BASE_URL production
+printf '%s' "$VITE_SUPABASE_URL" | npx vercel env add VITE_SUPABASE_URL production
+printf '%s' "$VITE_SUPABASE_ANON_KEY" | npx vercel env add VITE_SUPABASE_ANON_KEY production
+npx vercel deploy --prod --yes
+```
+
+### Endpoint checks
+
+```bash
+curl "$API_BASE_URL/health"
+
+curl -X POST "$API_BASE_URL/api/run-session" \
+  -H 'content-type: application/json' \
+  --data-binary @backend/contracts/examples/session_input_example.json
+
+curl -X POST "$API_BASE_URL/api/copilot" \
+  -H 'content-type: application/json' \
+  -d '{"messages":[{"role":"user","content":"Summarise the highest risk."}]}'
+
+curl -X POST "$API_BASE_URL/api/evidence-report" \
+  -H 'content-type: application/json' \
+  -d '{"session_id":"SES-2026-016"}'
+```
+
+Local verification:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r backend/requirements-lambda.txt pytest
+PYTHONPATH=backend .venv/bin/pytest -q backend
+PYTHONPATH=backend .venv/bin/python backend/tests/test_pipeline.py
+cd frontend && npm ci && npm run build
+```
 
 ---
 

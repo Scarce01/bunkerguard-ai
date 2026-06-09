@@ -38,6 +38,7 @@ pip-wheel-metadata/
 # ─── Build artifacts ─────────────────────────────────────────────────────
 out/
 build/
+.build/
 .tmp_page.html
 .tmp/
 tmp/
@@ -66,3 +67,5 @@ lerna-debug.log*
 # ─── Large local-only models (served from disk in dev) ───────────────────
 # Comment out if you want to commit the GLB scenery.
 *.glb.local
+.vercel
+**/supabase/.temp/

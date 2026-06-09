@@ -1,0 +1,5 @@
+anthropic>=0.52,<1
+boto3>=1.38,<2
+cryptography>=44,<46
+pydantic>=2.11,<3
+supabase>=2.15,<3

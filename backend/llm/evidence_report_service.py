@@ -20,7 +20,7 @@ NOTE FOR INTEGRATOR:
        fetch + Claude call, keeping the existing blockchain step; OR
     2. Expose this as a separate FastAPI/Flask route equivalent to the TS
        `POST /api/sessions/:sessionId/complete` endpoint.
-  Supabase env vars expected: SUPABASE_URL, SUPABASE_SERVICE_KEY.
+  Supabase env vars expected: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
   Anthropic env var expected:  ANTHROPIC_API_KEY.
 """
 from __future__ import annotations
@@ -44,7 +44,9 @@ def _get_supabase():
     from supabase import create_client  # type: ignore
 
     url = os.environ["SUPABASE_URL"]
-    key = os.environ["SUPABASE_SERVICE_KEY"]
+    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_SERVICE_KEY")
+    if not key:
+        raise RuntimeError("SUPABASE_SERVICE_ROLE_KEY is required")
     return create_client(url, key)
 
 

@@ -121,9 +121,6 @@ export const VESSELS_BY_TERMINAL: Record<string, VesselSpot[]> = {
   ],
 };
 
-/** Public path the FE fetches the vessel GLB from — served by the external-models middleware. */
-export const VESSEL_GLB = '/models/bunkering_vessel_complete.glb';
-
 /* ─── Terminal-scoped dashboard data ──────────────────────────────────── */
 /* When a terminal is opened in 3D, the right + bottom dashboard panels
  * switch from network-wide aggregates to data scoped to that one terminal.
