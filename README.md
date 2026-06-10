@@ -104,7 +104,10 @@ fraud scores, carbon values, and sign-off rules remain deterministic.
 
 ## System Architecture
 
-### System & tech stack & agent orchestration
+### Agent orchestration
+![BunkerGuard agent orchestration — risk-gated autonomy with human sign-off](orchestration.png)
+
+### System & tech stack
 ![BunkerGuard system architecture across Vercel, AWS, and the deterministic core](tech_stack.png)
 
 ```mermaid
