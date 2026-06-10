@@ -6,6 +6,8 @@
 [![Backend](https://img.shields.io/badge/AWS-Lambda%20%2B%20API%20Gateway-FF9900?logo=amazonaws)](https://tf5wkg4t7d.execute-api.us-west-2.amazonaws.com/health)
 [![Database](https://img.shields.io/badge/Supabase-Postgres-3ECF8E?logo=supabase)](https://supabase.com)
 [![LLM](https://img.shields.io/badge/Amazon-Bedrock-8A2BE2)](https://aws.amazon.com/bedrock/)
+[![AI Gateway](https://img.shields.io/badge/Vercel-AI%20Gateway-000000?logo=vercel)](https://vercel.com/docs/ai-gateway)
+[![Search](https://img.shields.io/badge/Exa-Search-1A1A1A)](https://exa.ai)
 
 ## Live Deployment
 
@@ -17,6 +19,22 @@
 | AWS region | `us-west-2` |
 | S3 evidence bucket | `bunkerguard-ai-evidencebucket-odsosgkrmqcl` |
 | Supabase project | `jdnzznxwdczcktfqwxmj` |
+
+## Hackathon Stack Alignment
+
+BunkerGuard AI is an agentic system whose autonomous workflows are exercised on
+the partner stack of the hackathon (AWS, Vercel, Exa):
+
+| Partner | Integration | Evidence |
+|---|---|---|
+| **AWS** | Lambda, API Gateway HTTP API, S3 (versioned, AES-256), CloudFormation, IAM, Amazon Bedrock (Claude Sonnet 4.6) | `infrastructure/template.yaml`, `infrastructure/deploy.sh`, deployed stack `bunkerguard-ai` in `us-west-2` |
+| **Vercel** | Frontend hosting + **AI Gateway** as a production LLM provider (fallback chain) | `_call_vercel_ai_gateway` in `backend/llm/claude_client.py`, `AI_GATEWAY_API_KEY` env, Vercel dashboard AI Gateway tab |
+| **Exa** | Live supplier, vessel, barge, and port intelligence on every BDN ingestion | `backend/enrichment/`, persisted to `enrichment_results` / `supplier_intelligence` / `vessel_intelligence` |
+
+The agents take real actions on this stack: they upload BDNs to S3, write
+sessions to Supabase, query Exa for live intelligence, call Claude via Bedrock
+(with Vercel AI Gateway and OpenRouter fallback), generate hashed evidence
+reports back into S3, and return deterministic SIGN / REVIEW / REFUSE verdicts.
 
 ## Overview
 
@@ -85,8 +103,9 @@ fraud scores, carbon values, and sign-off rules remain deterministic.
 | AWS Lambda | Public APIs and asynchronous ingestion worker |
 | API Gateway HTTP API | HTTPS routing and CORS |
 | Amazon Bedrock Runtime | Primary Claude provider |
+| Vercel AI Gateway | Production-grade Claude fallback provider |
 | Anthropic SDK | Direct provider and multimodal document extraction |
-| OpenRouter | Automatic Claude fallback |
+| OpenRouter | Final Claude fallback |
 | Exa Search API | Supplier, vessel, barge, and port context |
 | boto3 | Bedrock, Lambda self-invocation, and S3 operations |
 | pypdf | Text extraction from digital PDFs |
@@ -129,7 +148,8 @@ flowchart TB
     end
 
     subgraph External[Intelligence Services]
-        OpenRouter[OpenRouter Claude Fallback]
+        Gateway[Vercel AI Gateway Claude]
+        OpenRouter[OpenRouter Claude Final Fallback]
         Anthropic[Anthropic Multimodal API]
         Exa[Exa Search]
     end
@@ -151,7 +171,8 @@ flowchart TB
     Lambda --> S3
     Lambda --> DB
     Lambda --> Bedrock
-    Bedrock -. unavailable .-> OpenRouter
+    Bedrock -. unavailable .-> Gateway
+    Gateway -. unavailable .-> OpenRouter
     Lambda -->|asynchronous invoke| Worker
     Worker --> Anthropic
     Worker --> Exa
@@ -344,34 +365,81 @@ The Stage 2 and Stage 3 engines are reused unchanged by ingestion and
 
 ## LLM Architecture
 
+BunkerGuard AI runs every Claude inference through a deterministic provider
+chain. Each call is attempted against Bedrock first, then automatically falls
+back to the Vercel AI Gateway, and finally OpenRouter. The chain is enforced
+inside `backend/llm/claude_client.py` and is covered by `test_llm_fallback.py`.
+
 ```mermaid
 flowchart TD
-    Request[Copilot or report] --> Provider{LLM_PROVIDER}
-    Provider -->|anthropic| Anthropic[Anthropic API]
-    Provider -->|bedrock| Bedrock[Bedrock Converse API]
+    Request[Copilot, Evidence Report, Supplier Intelligence] --> Bedrock[Amazon Bedrock<br/>Claude Sonnet 4.6]
     Bedrock -->|success| Result[Provider-tagged result]
-    Bedrock -->|AccessDenied or inference-profile error| OR[OpenRouter Claude]
+    Bedrock -->|AccessDenied / inference profile / 5xx| Gateway[Vercel AI Gateway<br/>anthropic/claude-sonnet-4.6]
+    Gateway -->|success| Result
+    Gateway -->|timeout / 4xx / 5xx| OR[OpenRouter<br/>anthropic/claude-sonnet-4.6]
     OR --> Result
-    Anthropic --> Result
 ```
 
-| Provider | Configuration | Use |
-|---|---|---|
-| Bedrock | `LLM_PROVIDER=bedrock`, `BEDROCK_MODEL_ID` | AWS-first provider |
-| Anthropic | `LLM_PROVIDER=anthropic`, `ANTHROPIC_API_KEY` | Direct provider and multimodal OCR |
-| OpenRouter | `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` | Automatic Bedrock fallback |
+| Priority | Provider | Configuration | Role |
+|---|---|---|---|
+| 1 | Amazon Bedrock | `LLM_PROVIDER=bedrock`, `BEDROCK_MODEL_ID` | Primary inference on AWS |
+| 2 | Vercel AI Gateway | `AI_GATEWAY_API_KEY`, `VERCEL_AI_GATEWAY_MODEL` | Production fallback through Vercel |
+| 3 | OpenRouter | `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` | Final Claude fallback |
+| dev | Anthropic SDK | `LLM_PROVIDER=anthropic`, `ANTHROPIC_API_KEY` | Local development and multimodal OCR |
 
-Copilot responses expose the actual provider:
+Every Copilot, Evidence Report, and Supplier Intelligence response exposes the
+provider that actually served the call:
 
 ```json
 {
-  "provider_used": "openrouter",
+  "provider_used": "vercel_ai_gateway",
   "model": "anthropic/claude-sonnet-4.6"
 }
 ```
 
-LLM output does not determine carbon values. Evidence reports overwrite the
-environmental section with deterministic backend calculations.
+`provider_used` may return `bedrock`, `vercel_ai_gateway`, or `openrouter` in
+production. The `/health` endpoint also reports which providers are configured:
+
+```json
+{
+  "bedrock_configured": true,
+  "vercel_ai_gateway_configured": true,
+  "openrouter_configured": true,
+  "active_provider": "bedrock_with_vercel_ai_gateway_and_openrouter_fallback"
+}
+```
+
+LLM output never determines carbon values, anomaly scores, or sign-off rules.
+Evidence reports overwrite the environmental section with deterministic backend
+calculations after the model returns.
+
+### Vercel AI Gateway Integration
+
+| Detail | Value |
+|---|---|
+| Endpoint | `https://ai-gateway.vercel.sh/v1/chat/completions` |
+| Default model | `anthropic/claude-sonnet-4.6` |
+| Auth header | `Authorization: Bearer $AI_GATEWAY_API_KEY` |
+| Timeout | 8 seconds per call (prevents API Gateway 503s) |
+| Retries | One retry inside the Vercel gateway; backend never loops |
+| Surface area | Backend only — the API key is never sent to the browser |
+
+The gateway integration lives in `_call_vercel_ai_gateway` and is exercised by
+the Copilot, Evidence Report, and Supplier Intelligence pipelines. Requests
+flowing through it appear in the Vercel dashboard under the AI Gateway tab.
+
+### Evidence Report Reliability
+
+The Evidence Report endpoint is engineered to complete inside the API Gateway
+30-second window:
+
+- deterministic fields (report id, header, evidence items, S3 metadata, carbon)
+  are built by the backend in pure Python;
+- only the executive summary, narrative, and recommended actions are LLM-generated;
+- model calls use a hard 8-second timeout and a 260-token cap;
+- a single deterministic retry maximum;
+- on any LLM failure the backend returns a fallback narrative instead of HTTP 503;
+- the response includes `provider_used`, `model`, `s3_key`, and `report_hash`.
 
 ## Carbon Intelligence
 
@@ -669,8 +737,11 @@ Never commit `.env` or `.env.local`.
 | `S3_BUCKET` | Yes | Evidence and document bucket |
 | `EXA_API_KEY` | For enrichment | Exa key |
 | `ANTHROPIC_API_KEY` | Optional | Direct provider and scanned OCR |
-| `OPENROUTER_API_KEY` | Optional | Bedrock fallback |
+| `AI_GATEWAY_API_KEY` | Recommended | Vercel AI Gateway Claude fallback |
+| `VERCEL_AI_GATEWAY_MODEL` | Optional | Defaults to `anthropic/claude-sonnet-4.6` |
+| `OPENROUTER_API_KEY` | Optional | Final Claude fallback after Vercel AI Gateway |
 | `OPENROUTER_MODEL` | Optional | OpenRouter model |
+| `ACTIVE_PROVIDER` | Optional | Label exposed at `/health` |
 | `CORS_ORIGIN` | Production | Allowed frontend origin |
 | `VLSFO_SPOT_PRICE` | Optional | Financial exposure reference |
 
@@ -696,8 +767,11 @@ export BEDROCK_MODEL_ID='YOUR_MODEL_OR_INFERENCE_PROFILE'
 export SUPABASE_URL='https://YOUR_PROJECT.supabase.co'
 export SUPABASE_SERVICE_ROLE_KEY='YOUR_SERVICE_ROLE_KEY'
 export EXA_API_KEY='YOUR_EXA_KEY'
+export AI_GATEWAY_API_KEY='YOUR_VERCEL_AI_GATEWAY_KEY'
+export VERCEL_AI_GATEWAY_MODEL='anthropic/claude-sonnet-4.6'
 export OPENROUTER_API_KEY='YOUR_OPENROUTER_KEY'
 export OPENROUTER_MODEL='anthropic/claude-sonnet-4.6'
+export ACTIVE_PROVIDER='bedrock_with_vercel_ai_gateway_and_openrouter_fallback'
 export CORS_ORIGIN='https://bunkerguard-ai.vercel.app'
 
 ./infrastructure/deploy.sh
