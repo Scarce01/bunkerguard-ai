@@ -3,6 +3,7 @@ import { useParams } from 'react-router';
 import { Bot, Send, Sparkles, X, Command } from 'lucide-react';
 import { useCopilotContext } from '../../lib/useCopilotContext';
 import { useCopilotSessions } from '../../lib/useCopilotSessions';
+import { apiUrl } from '../../lib/api';
 
 const RAIL_WIDTH_PX = 380;
 const OVERLAY_BREAKPOINT_PX = 1100;
@@ -274,7 +275,10 @@ export function PortCopilot({ sessionId: sessionIdProp }: PortCopilotProps = {})
     setBusy(true);
 
     try {
-      if (toolMode && sessionId) {
+      const productionApiConfigured = Boolean(
+        (import.meta.env.VITE_API_BASE_URL ?? '').trim(),
+      );
+      if (toolMode && sessionId && !productionApiConfigured) {
         // Tool-mode: backend runs Claude with the 8-tool surface.
         const history = messages.flatMap((m) => {
           const turns: any[] = [{ role: m.role, content: { text: m.content } }];
@@ -301,7 +305,7 @@ export function PortCopilot({ sessionId: sessionIdProp }: PortCopilotProps = {})
       } else {
         // Fallback: multi-session text-context chat (the original path).
         const sys = `${SYSTEM_PROMPT}\n\n## CONTEXT — live Supabase snapshot\n${contextText}`;
-        const res = await fetch('/api/copilot', {
+        const res = await fetch(apiUrl('/api/copilot'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ system: sys, messages: next, maxTokens: 700 }),
