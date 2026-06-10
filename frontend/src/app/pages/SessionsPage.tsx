@@ -9,6 +9,7 @@ import { BDNDetailsDrawer } from '../components/details/BDNDetailsDrawer';
 import { MFMTelemetryPanel } from '../components/details/MFMTelemetryPanel';
 import { BDNUploadDrawer } from '../components/upload/BDNUploadDrawer';
 import { useNow } from '../../lib/useNowClock';
+import { LIVE_DEMO_SESSIONS } from '../../lib/sessionDerive';
 
 const CARD: React.CSSProperties = {
   background: 'linear-gradient(180deg, #102033 0%, #0E1C2D 100%)',
@@ -58,7 +59,13 @@ export function SessionsPage() {
       session.vesselName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       session.supplierName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       session.id.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesStatus = statusFilter === 'ALL' || session.status === statusFilter;
+    /* Status filter — DB enum values are ACTIVE / COMPLETED / HALTED.
+     * Treat the demo-live session as ACTIVE so the operator can filter
+     * to "the one currently bunkering" and find SES-2026-016 even
+     * though Supabase has it marked COMPLETED. */
+    const isDemoLive = LIVE_DEMO_SESSIONS.has(session.id);
+    const effectiveStatus = isDemoLive ? 'ACTIVE' : session.status;
+    const matchesStatus = statusFilter === 'ALL' || effectiveStatus === statusFilter;
     const matchesRisk = riskFilter === 'ALL' || session.riskScore.level === riskFilter;
     const matchesSupplier = supplierFilter === 'ALL' || session.supplierName === supplierFilter;
     const matchesVessel = vesselFilter === 'ALL' || session.vesselName === vesselFilter;
@@ -127,10 +134,9 @@ export function SessionsPage() {
             style={{ ...inputStyle, padding: '9px 14px' }}
           >
             <option value="ALL">All Status</option>
-            <option value="BUNKERING">Bunkering</option>
+            <option value="ACTIVE">Active · Bunkering</option>
             <option value="COMPLETED">Completed</option>
-            <option value="ALERT">Alert</option>
-            <option value="REFUSED">Refused</option>
+            <option value="HALTED">Halted</option>
           </select>
           <select
             value={riskFilter}

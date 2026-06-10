@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from './supabase';
 import { useNowClock } from './useNowClock';
-import { deriveSessionLive } from './sessionDerive';
+import { deriveSessionLive, LIVE_DEMO_SESSIONS } from './sessionDerive';
 import { useStreamCache, loopedPacketAt } from './useLiveStream';
 
 /** Lightweight row shape — matches the subset of mockSession fields the
@@ -50,6 +50,16 @@ export function useSessionsList(): SessionsListData {
   const [rawRows, setRawRows] = useState<any[]>([]);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState<string | null>(null);
+  // Bumped by the `bunkerguard:sessions-changed` window event so a
+  // freshly-uploaded BDN appears in the list immediately, without
+  // waiting for the next 30 s NowClock tick.
+  const [eventTick, setEventTick] = useState(0);
+
+  useEffect(() => {
+    const handler = () => setEventTick((n) => n + 1);
+    window.addEventListener('bunkerguard:sessions-changed', handler);
+    return () => window.removeEventListener('bunkerguard:sessions-changed', handler);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -74,10 +84,11 @@ export function useSessionsList(): SessionsListData {
 
     load();
     return () => { cancelled = true; };
-    // Refetch on the shared 5 s heartbeat so the Sessions list always
-    // agrees with whatever the Dashboard / Live Session just refreshed.
+    // Refetch on the shared 30 s heartbeat OR immediately when the
+    // upload drawer dispatched `bunkerguard:sessions-changed` after
+    // inserting a new row.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refetchTick]);
+  }, [refetchTick, eventTick]);
 
   // Derive every render: every 1 s the shared clock ticks, the deriver
   // re-runs against the raw rows. Pure → memoised on (rawRows, now).
@@ -101,6 +112,16 @@ export function useSessionsList(): SessionsListData {
       const bdnFinal = Number(s.bdn_qty_mt ?? 0);
       const mfmFinal = Number(s.mfm_qty_mt ?? 0);
 
+      /* Demo-live override — the focus session is COMPLETED in Supabase
+       * but the app presents it as actively bunkering everywhere else
+       * (Live Session loops its real mfm_stream, Dashboard pin pulses,
+       * Sessions filter treats it as ACTIVE). Mirror that here so the
+       * status pill and the verdict pill on this row match the rest of
+       * the app — no operator confusion between tabs. */
+      const isDemoLive = LIVE_DEMO_SESSIONS.has(String(s.session_id));
+      const displayStatus = isDemoLive ? 'ACTIVE' : (s.status ?? 'PENDING');
+      const displayVerdict = isDemoLive ? 'PENDING' : (s.verdict ?? 'PENDING');
+
       return {
         id: s.session_id,
         sessionNumber: num,
@@ -110,8 +131,8 @@ export function useSessionsList(): SessionsListData {
         bargeName: s.barge_name ?? '—',
         location: s.port ?? '—',
         fuelGrade: s.fuel_grade ?? '—',
-        status: s.status ?? 'PENDING',
-        verdict: s.verdict ?? 'PENDING',
+        status: displayStatus,
+        verdict: displayVerdict,
         startTime: startISO,
         // BDN is the contracted quantity — always show the full target.
         bdnQuantity: bdnFinal,

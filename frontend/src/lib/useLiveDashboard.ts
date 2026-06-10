@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase, AnomalyRow, SupplierRow, SessionRow } from './supabase';
 import { useNowClock } from './useNowClock';
-import { relativeTimeFrom } from './sessionDerive';
+import { relativeTimeFrom, LIVE_DEMO_SESSIONS } from './sessionDerive';
 
 /**
  * Pulls the data the Dashboard's Critical Events and Supplier Watchlist
@@ -143,7 +143,12 @@ export function useLiveDashboard(terminalPortNames?: string[]): DashboardData {
         // ─── KPIs (fleet-wide counts) ─────────────────────────────────
         const [criticalCountRes, activeCountRes, flaggedSupRes, riskRes] = await Promise.all([
           supabase.from('sessions').select('session_id', { count: 'exact', head: true }).eq('risk_category', 'CRITICAL'),
-          supabase.from('sessions').select('session_id', { count: 'exact', head: true }).eq('status', 'BUNKERING'),
+          /* Real enum value is ACTIVE, not BUNKERING — the dashboard
+           * KPI used to report 0 because no row ever had 'BUNKERING'.
+           * After this query the demo-live sessions are folded in below
+           * (some are stored as COMPLETED but the app presents them as
+           * actively bunkering). */
+          supabase.from('sessions').select('session_id', { count: 'exact', head: true }).eq('status', 'ACTIVE'),
           supabase.from('suppliers').select('id', { count: 'exact', head: true }).lt('reputation_score', 70),
           supabase.from('risk_scores').select('estimated_impact_usd'),
         ]);
@@ -154,9 +159,23 @@ export function useLiveDashboard(terminalPortNames?: string[]): DashboardData {
           : lossSum >= 1_000
           ? `$${Math.round(lossSum / 1_000)}K`
           : `$${Math.round(lossSum)}`;
+        /* Fold demo-live sessions that are stored as COMPLETED into the
+         * Active count so the KPI matches what every other tab shows
+         * (Live Session, Sessions list, dashboard pin). Skip rows already
+         * counted as ACTIVE in Supabase to avoid double-counting. */
+        let demoLiveAddon = 0;
+        if (LIVE_DEMO_SESSIONS.size > 0) {
+          const { data: demoRows } = await supabase
+            .from('sessions')
+            .select('session_id,status')
+            .in('session_id', Array.from(LIVE_DEMO_SESSIONS));
+          for (const row of (demoRows ?? []) as any[]) {
+            if (row.status !== 'ACTIVE') demoLiveAddon += 1;
+          }
+        }
         const mappedKpis: DashboardKPIs = {
           criticalAlerts: criticalCountRes.count ?? 0,
-          activeSessions: activeCountRes.count ?? 0,
+          activeSessions: (activeCountRes.count ?? 0) + demoLiveAddon,
           supplierFlags:  flaggedSupRes.count ?? 0,
           lossPrevented:  lossPretty,
         };

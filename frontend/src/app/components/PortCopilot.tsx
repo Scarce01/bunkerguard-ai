@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router';
 import { Bot, Send, Sparkles, X, Command } from 'lucide-react';
 import { useCopilotContext } from '../../lib/useCopilotContext';
@@ -218,20 +218,30 @@ export function PortCopilot({ sessionId: sessionIdProp }: PortCopilotProps = {})
   const scrollRef = useRef<HTMLDivElement>(null);
   // Focused-session block is fetched below once `sessionId` is resolved.
 
-  // Tool-mode resolution priority:
-  //   1. user override via the picker chip (manualSessionId)
-  //   2. explicit prop from the parent page (Dashboard top-risk card etc.)
-  //   3. /sessions/:sessionId route param
-  //   4. top-risk session from Supabase (so the bar is *always* tool-mode)
+  // Tool-mode focus resolution. The mental model:
+  //   * When the user is on a session detail page or a page that explicitly
+  //     focuses a session via prop, that wins — the URL/page is the source
+  //     of truth. A previous manual pick must NOT override the new page.
+  //   * Off-session pages fall back to (a) the user's last manual pick, or
+  //     (b) the top-risk session so the bar is always tool-mode.
   const params = useParams<{ sessionId?: string }>();
   const { sessions: pickerSessions } = useCopilotSessions(12);
   const [manualSessionId, setManualSessionId] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const sessionId =
-    manualSessionId ?? sessionIdProp ?? params.sessionId ?? pickerSessions[0]?.session_id;
+  const routeOrProp = sessionIdProp ?? params.sessionId;
+  const sessionId = routeOrProp ?? manualSessionId ?? pickerSessions[0]?.session_id;
   const toolMode = Boolean(sessionId);
   const focusedSession = pickerSessions.find((s) => s.session_id === sessionId);
   const { text: focusText, loading: focusLoading } = useFocusedSessionContext(sessionId);
+
+  // Whenever the route/prop binds a new session, clear any stale manual pick
+  // AND reset the chat — a new focus means a new conversation.
+  useEffect(() => {
+    if (routeOrProp && manualSessionId && routeOrProp !== manualSessionId) {
+      setManualSessionId(null);
+      setMessages([]);
+    }
+  }, [routeOrProp, manualSessionId]);
 
   // Rail vs overlay — wide viewports push content left; small viewports overlay
   // so the dashboard isn't crushed.
@@ -536,28 +546,38 @@ export function PortCopilot({ sessionId: sessionIdProp }: PortCopilotProps = {})
           </>
         )}
 
-        {messages.map((m, i) => (
-          <div key={i} style={{
-            alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start',
-            maxWidth: '92%',
-            display: 'flex', flexDirection: 'column', gap: 6,
-          }}>
-            <div style={{
-              padding: '8px 12px',
-              background: m.role === 'user' ? 'rgba(46,168,255,0.20)' : 'rgba(127,165,211,0.10)',
-              border: `1px solid ${m.role === 'user' ? 'rgba(46,168,255,0.45)' : 'rgba(127,165,211,0.25)'}`,
-              borderRadius: 8,
-              fontSize: 12, lineHeight: 1.45,
-              color: '#E5F2FF',
-              whiteSpace: 'pre-wrap',
+        {messages.map((m, i) => {
+          // Suppress the assistant text bubble entirely when it is empty or
+          // when every word would just be redundant with the rendered tool
+          // artifacts. Keeps the chat visually clean.
+          const text = (m.content || '').trim();
+          const showText = text.length > 0 && text !== '(empty)';
+          return (
+            <div key={i} style={{
+              alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start',
+              maxWidth: '94%',
+              display: 'flex', flexDirection: 'column', gap: 6,
             }}>
-              {m.content}
+              {showText && (
+                <div style={{
+                  padding: m.role === 'user' ? '7px 12px' : '8px 12px',
+                  background: m.role === 'user' ? 'rgba(46,168,255,0.18)' : 'transparent',
+                  border: m.role === 'user'
+                    ? '1px solid rgba(46,168,255,0.40)'
+                    : 'none',
+                  borderRadius: 10,
+                  fontSize: 12, lineHeight: 1.55,
+                  color: '#E5F2FF',
+                }}>
+                  {m.role === 'assistant' ? renderRichText(text) : text}
+                </div>
+              )}
+              {(m.toolCalls ?? []).map((tc, j) => (
+                <ToolArtifact key={j} call={tc} onPrompt={send} />
+              ))}
             </div>
-            {(m.toolCalls ?? []).map((tc, j) => (
-              <ToolArtifact key={j} call={tc} onPrompt={send} />
-            ))}
-          </div>
-        ))}
+          );
+        })}
 
         {busy && (
           <div style={{
@@ -719,17 +739,32 @@ function ToolArtifact({
     );
   }
   if (call.name === 'generate_evidence_pdf' && assetSrc) {
+    const fname = String(r.path || r.pdf_path || '').split(/[\\/]/).pop() || 'EvidenceReport.pdf';
     return (
       <a href={assetSrc} target="_blank" rel="noopener noreferrer"
          style={{
-           fontSize: 11, color: '#2EA8FF', textDecoration: 'none',
-           padding: '6px 10px',
-           background: 'rgba(46,168,255,0.10)',
-           border: '1px solid rgba(46,168,255,0.30)',
-           borderRadius: 6,
-           display: 'inline-flex', alignItems: 'center', gap: 6,
+           display: 'flex', alignItems: 'center', gap: 10,
+           padding: '10px 12px',
+           background: 'linear-gradient(165deg, rgba(46,168,255,0.18), rgba(46,168,255,0.06))',
+           border: '1px solid rgba(46,168,255,0.40)',
+           borderRadius: 10, textDecoration: 'none',
          }}>
-        📄 Download evidence PDF
+        <div style={{
+          width: 32, height: 38, flexShrink: 0,
+          background: '#FF5252', borderRadius: 3,
+          color: '#fff', fontSize: 8, fontWeight: 800,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          letterSpacing: 0.5,
+        }}>PDF</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 11.5, fontWeight: 700, color: '#E5F2FF', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {String(r.caption || 'Evidence report')}
+          </div>
+          <div style={{ fontSize: 10, color: '#7FA5D3', marginTop: 2, fontFamily: "'JetBrains Mono', monospace" }}>
+            {fname}
+          </div>
+        </div>
+        <div style={{ fontSize: 11, color: '#2EA8FF', fontWeight: 600 }}>↓</div>
       </a>
     );
   }
@@ -756,31 +791,115 @@ function ToolArtifact({
       v === 'SIGN_WITH_NOTES' ? '#F4C20D' :
       v === 'SIGN_WITH_LOP' ? '#FF7F0E' :
       v === 'REFUSE_TO_SIGN' ? '#E84118' : '#9AA0A6';
+    const fmtUsd = (n: any) =>
+      n == null ? '—' : `$${Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
     return (
       <div style={{
-        fontSize: 11, padding: 10,
-        background: 'rgba(8,19,31,0.55)',
-        border: `1px solid ${tone}80`,
-        borderLeft: `4px solid ${tone}`,
-        borderRadius: 8,
+        background: 'linear-gradient(165deg, rgba(8,19,31,0.85), rgba(8,19,31,0.6))',
+        border: `1px solid ${tone}55`,
+        borderRadius: 12,
+        overflow: 'hidden',
         color: '#E5F2FF',
       }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: tone }}>
-          {v.replace(/_/g, ' ')} · {r.risk_score ?? '—'}/100
+        {/* Verdict header — accent strip + label + score */}
+        <div style={{
+          padding: '12px 14px',
+          background: `linear-gradient(90deg, ${tone}22, transparent)`,
+          borderBottom: `1px solid ${tone}33`,
+          display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+        }}>
+          <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: 0.3, color: tone }}>
+            {v.replace(/_/g, ' ')}
+          </div>
+          <div style={{ fontSize: 11, color: '#7FA5D3' }}>
+            <span style={{ fontSize: 18, fontWeight: 800, color: tone }}>
+              {r.risk_score ?? '—'}
+            </span>
+            <span style={{ marginLeft: 2 }}>/100 · {String(r.category ?? '—')}</span>
+          </div>
         </div>
-        {r.headline && <div style={{ marginTop: 4 }}>{String(r.headline)}</div>}
+
+        {/* Stat tiles row — exposure + dispute window */}
+        <div style={{
+          display: 'grid', gridTemplateColumns: '1fr 1fr',
+          gap: 1, background: 'rgba(46,168,255,0.10)',
+        }}>
+          <div style={{ padding: '10px 12px', background: 'rgba(8,19,31,0.85)' }}>
+            <div style={{ fontSize: 9, color: '#7FA5D3', letterSpacing: 0.6 }}>EXPOSURE</div>
+            <div style={{ fontSize: 14, fontWeight: 700, marginTop: 2 }}>
+              {fmtUsd(r.exposure_usd)}
+            </div>
+          </div>
+          <div style={{ padding: '10px 12px', background: 'rgba(8,19,31,0.85)' }}>
+            <div style={{ fontSize: 9, color: '#7FA5D3', letterSpacing: 0.6 }}>DISPUTE WINDOW</div>
+            <div style={{ fontSize: 14, fontWeight: 700, marginTop: 2 }}>
+              {r.dispute_window_hours ?? 72}<span style={{ fontSize: 10, color: '#7FA5D3' }}> h</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Findings — severity dot + rule chip + name, clickable to drill in */}
         {Array.isArray(r.top_reasons) && r.top_reasons.length > 0 && (
-          <ul style={{ margin: '6px 0 0', paddingLeft: 16, color: '#C4D8EE' }}>
-            {r.top_reasons.map((t: any, i: number) => (
-              <li key={i}><b>{t.rule_id}</b> · {t.name} ({t.severity})</li>
-            ))}
-          </ul>
+          <div style={{ padding: '10px 12px', borderTop: '1px solid rgba(46,168,255,0.10)' }}>
+            <div style={{ fontSize: 9, color: '#7FA5D3', letterSpacing: 0.6, marginBottom: 6 }}>
+              TOP FINDINGS
+            </div>
+            {r.top_reasons.map((t: any, i: number) => {
+              const sev = sevTone(t.severity);
+              const dot = { critical:'#E84118', high:'#FF7F0E', medium:'#F4C20D', low:'#2ECC71' }[sev];
+              return (
+                <button key={i}
+                  onClick={() => onPrompt(`Why ${t.rule_id}?`)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    width: '100%', textAlign: 'left',
+                    padding: '6px 4px',
+                    background: 'transparent', border: 'none',
+                    color: '#E5F2FF', fontSize: 11.5,
+                    cursor: 'pointer',
+                    borderRadius: 4,
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(46,168,255,0.08)')}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>
+                  <span style={{
+                    width: 8, height: 8, borderRadius: '50%', background: dot, flexShrink: 0,
+                  }} />
+                  <span style={{ fontWeight: 700, color: dot, minWidth: 48 }}>{t.rule_id}</span>
+                  <span style={{ flex: 1, color: '#E5F2FF' }}>{t.name}</span>
+                  <span style={{ fontSize: 9, color: '#7FA5D3', opacity: 0.6 }}>→</span>
+                </button>
+              );
+            })}
+          </div>
         )}
+
+        {/* On-deck checklist — clickable rows that fire mark_action_done */}
         {Array.isArray(r.checklist) && r.checklist.length > 0 && (
-          <div style={{ marginTop: 6 }}>
-            <div style={{ fontSize: 9, color: '#7FA5D3', letterSpacing: 0.4 }}>DO THIS NOW</div>
+          <div style={{ padding: '10px 12px', borderTop: '1px solid rgba(46,168,255,0.10)' }}>
+            <div style={{ fontSize: 9, color: '#7FA5D3', letterSpacing: 0.6, marginBottom: 6 }}>
+              DO THIS NOW
+            </div>
             {r.checklist.map((c: any, i: number) => (
-              <div key={i} style={{ fontSize: 11 }}>⬜ {c.text}</div>
+              <button key={i}
+                onClick={() => onPrompt(`Done — ${c.text}`)}
+                style={{
+                  display: 'flex', alignItems: 'flex-start', gap: 9,
+                  width: '100%', textAlign: 'left',
+                  padding: '6px 4px',
+                  background: 'transparent', border: 'none',
+                  color: '#E5F2FF', fontSize: 11.5, lineHeight: 1.4,
+                  cursor: 'pointer',
+                  borderRadius: 4,
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(46,168,255,0.08)')}
+                onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>
+                <span style={{
+                  width: 14, height: 14, borderRadius: 3,
+                  border: '1.5px solid #7FA5D3', flexShrink: 0,
+                  marginTop: 1,
+                }} />
+                <span>{c.text}</span>
+              </button>
             ))}
           </div>
         )}
@@ -788,27 +907,98 @@ function ToolArtifact({
     );
   }
   if (call.name === 'show_anomaly') {
+    const sev = sevTone(r.severity);
+    const tone = { critical:'#E84118', high:'#FF7F0E', medium:'#F4C20D', low:'#2ECC71' }[sev];
+    const hasNums = r.measured != null && r.reference != null;
+    const dev = r.deviation_pct != null ? Number(r.deviation_pct) : null;
     return (
       <div style={{
-        fontSize: 11, padding: 8,
-        background: 'rgba(8,19,31,0.55)',
-        border: '1px solid rgba(127,165,211,0.30)',
-        borderRadius: 6,
+        background: 'linear-gradient(165deg, rgba(8,19,31,0.85), rgba(8,19,31,0.6))',
+        border: `1px solid ${tone}55`,
+        borderLeft: `4px solid ${tone}`,
+        borderRadius: 10,
+        overflow: 'hidden',
         color: '#E5F2FF',
       }}>
-        <div style={{ fontWeight: 700 }}>
-          {String(r.rule_id ?? '—')} · {String(r.name ?? '')} ({String(r.severity ?? '')})
+        {/* Header: severity badge + rule_id + name */}
+        <div style={{
+          padding: '8px 12px',
+          display: 'flex', alignItems: 'center', gap: 8,
+          borderBottom: hasNums ? `1px solid ${tone}22` : 'none',
+        }}>
+          <span style={{
+            fontSize: 9, fontWeight: 800, letterSpacing: 0.6,
+            color: '#0D1117', background: tone,
+            padding: '2px 7px', borderRadius: 4,
+          }}>{String(r.severity ?? 'LOW')}</span>
+          <span style={{ fontWeight: 700, color: tone, fontSize: 12 }}>{String(r.rule_id ?? '—')}</span>
+          <span style={{ fontSize: 11.5, color: '#E5F2FF' }}>{String(r.name ?? '')}</span>
         </div>
-        {r.description && <div style={{ marginTop: 4 }}>{String(r.description)}</div>}
-        {r.measured != null && r.reference != null && (
-          <div style={{ marginTop: 4, color: '#C4D8EE' }}>
-            measured <b>{String(r.measured)}{r.unit}</b> vs expected{' '}
-            <b>{String(r.reference)}{r.unit}</b>
-            {r.deviation_pct != null && ` (${Number(r.deviation_pct).toFixed(2)}%)`}
+
+        {/* When the row carries measured/reference, render two tiles.
+            When it only has a description (Supabase rows often do), render
+            the description as a clean subline with the deviation chip. */}
+        {!hasNums && (r.description || dev != null) && (
+          <div style={{
+            padding: '10px 12px',
+            background: 'rgba(8,19,31,0.85)',
+            display: 'flex', flexDirection: 'column', gap: 6,
+          }}>
+            {r.description && (
+              <div style={{ fontSize: 11.5, color: '#E5F2FF', lineHeight: 1.5 }}>
+                {String(r.description)}
+              </div>
+            )}
+            {dev != null && (
+              <div style={{
+                alignSelf: 'flex-start',
+                padding: '2px 8px',
+                background: `${tone}22`,
+                border: `1px solid ${tone}55`,
+                borderRadius: 999,
+                fontSize: 10, fontWeight: 700, color: tone,
+              }}>
+                Δ {dev > 0 ? '+' : ''}{dev.toFixed(2)}%{r.unit ? ` ${r.unit}` : ''}
+              </div>
+            )}
           </div>
         )}
+        {hasNums && (
+          <div style={{
+            display: 'grid', gridTemplateColumns: '1fr 1fr',
+            gap: 1, background: `${tone}22`,
+          }}>
+            <div style={{ padding: '8px 12px', background: 'rgba(8,19,31,0.85)' }}>
+              <div style={{ fontSize: 9, color: '#7FA5D3', letterSpacing: 0.6 }}>MEASURED</div>
+              <div style={{ fontSize: 14, fontWeight: 700, marginTop: 2, color: tone }}>
+                {String(r.measured)}<span style={{ fontSize: 10, color: '#7FA5D3', marginLeft: 2 }}>{r.unit ?? ''}</span>
+              </div>
+            </div>
+            <div style={{ padding: '8px 12px', background: 'rgba(8,19,31,0.85)' }}>
+              <div style={{ fontSize: 9, color: '#7FA5D3', letterSpacing: 0.6 }}>EXPECTED</div>
+              <div style={{ fontSize: 14, fontWeight: 700, marginTop: 2 }}>
+                {String(r.reference)}<span style={{ fontSize: 10, color: '#7FA5D3', marginLeft: 2 }}>{r.unit ?? ''}</span>
+              </div>
+            </div>
+            {dev != null && (
+              <div style={{
+                gridColumn: '1 / -1',
+                padding: '6px 12px', background: 'rgba(8,19,31,0.85)',
+                fontSize: 11, color: tone, fontWeight: 700,
+                textAlign: 'right',
+              }}>
+                Δ {dev > 0 ? '+' : ''}{dev.toFixed(2)}%
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Citation footer */}
         {r.regulatory_basis && (
-          <div style={{ fontSize: 10, color: '#7FA5D3', marginTop: 4 }}>
+          <div style={{
+            padding: '6px 12px', borderTop: `1px solid ${tone}22`,
+            fontSize: 10, color: '#7FA5D3',
+          }}>
             {String(r.regulatory_basis)}
           </div>
         )}
@@ -874,4 +1064,85 @@ function sevTone(sev?: string): 'critical' | 'high' | 'medium' | 'low' {
     case 'MEDIUM':   return 'medium';
     default:         return 'low';
   }
+}
+
+/**
+ * Minimal inline markdown for assistant bubbles — handles **bold**, *italic*,
+ * `code`, list lines starting with "-" or numbers, and double-newline paragraph
+ * breaks. We deliberately do NOT pull in a markdown library: the assistant
+ * text is short, security-sensitive (no HTML pass-through), and the structure
+ * we want to convey is mostly already in the tool cards.
+ */
+function renderRichText(text: string): React.ReactNode {
+  // Drop horizontal rules (---) and empty action checkbox lines — the verdict
+  // card already renders the real checklist with clickable buttons.
+  const cleaned = text
+    .split('\n')
+    .filter((line) => !/^---+\s*$/.test(line))
+    .filter((line) => !/^\s*-\s*\[\s*\]\s*/.test(line))   // "- [ ] HOLD ..."
+    .join('\n')
+    .trim();
+  const paragraphs = cleaned.split(/\n{2,}/);
+  return (
+    <>
+      {paragraphs.map((para, pi) => {
+        const lines = para.split('\n');
+        const isList = lines.every((l) => /^\s*(?:[-*•]|\d+\.)\s+/.test(l));
+        if (isList) {
+          return (
+            <div key={pi} style={{ display: 'flex', flexDirection: 'column', gap: 4, margin: '4px 0' }}>
+              {lines.map((l, li) => (
+                <div key={li} style={{ display: 'flex', gap: 8 }}>
+                  <span style={{ color: '#2EA8FF', flexShrink: 0, marginTop: 1 }}>›</span>
+                  <span style={{ flex: 1 }}>{renderInline(l.replace(/^\s*(?:[-*•]|\d+\.)\s+/, ''))}</span>
+                </div>
+              ))}
+            </div>
+          );
+        }
+        return (
+          <p key={pi} style={{ margin: pi === 0 ? '0' : '6px 0 0' }}>
+            {lines.map((l, li) => (
+              <React.Fragment key={li}>
+                {li > 0 && <br />}
+                {renderInline(l)}
+              </React.Fragment>
+            ))}
+          </p>
+        );
+      })}
+    </>
+  );
+}
+
+/** Inline pass — bold / italic / inline-code. Safe text only, no HTML. */
+function renderInline(s: string): React.ReactNode {
+  const parts: React.ReactNode[] = [];
+  // Order matters: **bold** before *italic*, both before `code`.
+  const regex = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  let key = 0;
+  while ((m = regex.exec(s)) !== null) {
+    if (m.index > last) parts.push(s.slice(last, m.index));
+    const tok = m[0];
+    if (tok.startsWith('**')) {
+      parts.push(<b key={key++} style={{ color: '#FFF' }}>{tok.slice(2, -2)}</b>);
+    } else if (tok.startsWith('`')) {
+      parts.push(<code key={key++} style={{
+        fontFamily: "'JetBrains Mono', monospace",
+        fontSize: '0.92em',
+        padding: '1px 5px',
+        background: 'rgba(46,168,255,0.12)',
+        border: '1px solid rgba(46,168,255,0.25)',
+        borderRadius: 3,
+        color: '#7FC5FF',
+      }}>{tok.slice(1, -1)}</code>);
+    } else {
+      parts.push(<i key={key++} style={{ color: '#C4D8EE' }}>{tok.slice(1, -1)}</i>);
+    }
+    last = m.index + tok.length;
+  }
+  if (last < s.length) parts.push(s.slice(last));
+  return <>{parts}</>;
 }

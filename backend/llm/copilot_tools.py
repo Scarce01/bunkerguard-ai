@@ -284,27 +284,60 @@ class CopilotTools:
                             "before disconnection."}
 
     def generate_evidence_pdf(self) -> dict:
-        """Full audit bundle. Emailable, court-admissible."""
-        if self.session is None:
-            return {"error": "evidence_pdf needs the typed pipeline; "
-                             "use the dashboard 'Evidence Report' button which "
-                             "calls /api/evidence-report.",
-                    "use_endpoint": "/api/evidence-report",
-                    "session_id": self.view.session_id}
+        """Full audit bundle. Emailable, court-admissible.
+
+        Two paths:
+          * Typed pipeline (Streamlit / in-process) → outputs.report_bundle.
+          * Supabase-mode (web copilot) → llm.evidence_report_service.
+        Both end up returning ``{"path": "...", "caption": "..."}`` so the
+        frontend renders the same download chip regardless.
+        """
+        sid = self.view.session_id
+        # Path A — typed pipeline available.
+        if self.session is not None:
+            try:
+                from outputs.report_bundle import generate_all
+                results = generate_all(
+                    self.session, self.report, self.package,
+                    output_dir=self.output_dir, verbose=False,
+                )
+                pdf = results.get("pdf_report") or results.get("decision_console")
+                return {
+                    "path": pdf,
+                    "caption": f"Evidence report · {sid}",
+                    "all_artifacts": {k: v for k, v in results.items()
+                                      if k != "output_dir"},
+                }
+            except Exception as e:
+                log.warning("report_bundle failed, falling back: %s", e)
+
+        # Path B — Supabase-mode. Use the same service the dashboard's
+        # /api/evidence-report endpoint calls so the PDF is identical.
         try:
-            from outputs.report_bundle import generate_all
+            from llm.evidence_report_service import (
+                generate_evidence_report,
+                render_evidence_report_pdf,
+            )
         except ImportError as e:
-            return {"error": f"report_bundle unavailable: {e}"}
-        results = generate_all(
-            self.session, self.report, self.package,
-            output_dir=self.output_dir, verbose=False,
-        )
-        pdf = results.get("pdf_report") or results.get("decision_console")
-        return {
-            "pdf_path": pdf,
-            "all_artifacts": {k: v for k, v in results.items()
-                              if k not in ("output_dir",)},
-        }
+            return {"error": f"evidence_report_service unavailable: {e}"}
+        try:
+            report = generate_evidence_report(sid)
+            pdf_path = render_evidence_report_pdf(report, out_dir=self.output_dir)
+            return {
+                "path": str(pdf_path),
+                "caption": f"Evidence report · {sid}",
+                "report_id": report.get("report_id"),
+                "sign_off_status": report.get("sign_off_status"),
+            }
+        except Exception as e:
+            log.exception("evidence_pdf_supabase_failed")
+            return {
+                "error": f"{type(e).__name__}: {e}",
+                "session_id": sid,
+                "hint": ("The Supabase-mode PDF needs ANTHROPIC_API_KEY, "
+                         "SUPABASE_URL, and SUPABASE_SERVICE_KEY in the Vite "
+                         "server env, plus the session rows populated."),
+            }
 
     def mark_action_done(self, action_key: str) -> dict:
         """Tick the on-deck checklist. Survives screen-sleep via state file."""

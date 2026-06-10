@@ -10,7 +10,7 @@
  * Supabase (sessions / risk_scores / anomalies / llm_outputs / mfm_stream).
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Anchor, Brain, ShieldCheck, Gavel, UserCheck, Check, X, CheckCircle2, FileText } from 'lucide-react';
 import { supabase, SessionRow, RiskScoreRow, AnomalyRow } from '../../../lib/supabase';
 import { KiroGhostBadge, AGENT_AVATAR_SRC } from '../ai/KiroGhost';
@@ -63,8 +63,42 @@ export function AgentWorkflow({ session, risk, anomalies, mfm, llm, geofence, ou
     session.sign_off_status === 'APPROVED'   ? 'approved'   :
     session.sign_off_status === 'OVERRIDDEN' ? 'overridden' : 'pending',
   );
+  /* Re-sync the local sign-off state when the session row's
+   * sign_off_status changes upstream — useLiveSession polls llm_outputs
+   * stage 5 every 30 s and on Realtime push, so deleting the row in
+   * Supabase (or hitting the Reset button below) flips this back to
+   * 'pending' automatically. Without this useEffect the component would
+   * stay in its initial state forever. */
+  useEffect(() => {
+    const next =
+      session.sign_off_status === 'APPROVED'   ? 'approved'   :
+      session.sign_off_status === 'OVERRIDDEN' ? 'overridden' : 'pending';
+    setSignOff((cur) => (cur === 'saving' ? cur : next));
+  }, [session.sign_off_status]);
   const [signOffError, setSignOffError] = useState<string | null>(null);
   const [reportDrawerOpen, setReportDrawerOpen] = useState(false);
+
+  /** Reset for demo — deletes every stage-5 sign-off row for this
+   *  session so the APPROVE / OVERRIDE buttons come back and the
+   *  Intelligence-tab conversation re-pauses at "awaiting Chief Engineer".
+   *  Wired to a small inline button under the success badge so the
+   *  operator can do consecutive takes without dropping to SQL. */
+  async function resetForDemo() {
+    setSignOff('saving');
+    setSignOffError(null);
+    const { error } = await supabase
+      .from('llm_outputs')
+      .delete()
+      .eq('session_id', session.session_id)
+      .eq('stage', 5);
+    if (error) {
+      setSignOffError(error.message);
+      setSignOff(session.sign_off_status === 'OVERRIDDEN' ? 'overridden' : 'approved');
+      return;
+    }
+    setSignOff('pending');
+    onSessionUpdated?.({ sign_off_status: null as any });
+  }
 
   /* Investigator agent — LIVE backend enrichment via Exa.
    * Calls `enrichment.enrich_entities` through the /api/enrich Vite proxy.
@@ -526,6 +560,29 @@ export function AgentWorkflow({ session, risk, anomalies, mfm, llm, geofence, ou
                 display: 'flex', alignItems: 'center', gap: 6,
               }}>
                 <X size={12} /> AGENT VERDICT OVERRIDDEN · written to llm_outputs
+              </div>
+            )}
+            {/* Reset-for-demo affordance — appears only after a verdict is
+                recorded so the operator can run the next take without
+                touching SQL. Deletes every stage-5 llm_outputs row for
+                this session, flipping the UI back to PENDING and
+                rewinding the Intelligence-tab conversation to
+                "awaiting Chief Engineer sign-off". */}
+            {(signOff === 'approved' || signOff === 'overridden') && (
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6 }}>
+                <button
+                  onClick={resetForDemo}
+                  title="Delete the recorded sign-off so this session's verdict is PENDING again (for re-recording the demo)"
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 5,
+                    padding: '3px 9px', borderRadius: 4,
+                    fontSize: 9.5, fontWeight: 700, letterSpacing: 0.5,
+                    background: 'transparent',
+                    border: '1px solid rgba(255,255,255,0.18)',
+                    color: '#7FA5D3', cursor: 'pointer',
+                  }}>
+                  ↺ RESET (FOR DEMO)
+                </button>
               </div>
             )}
             {/* Real DB error — sign-off didn't persist. No more soft-warning

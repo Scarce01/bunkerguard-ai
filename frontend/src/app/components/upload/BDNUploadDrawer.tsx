@@ -11,6 +11,7 @@ import {
   type StartSessionResponse,
   type UploadResponse,
 } from '../../../lib/bunker-api';
+import { supabase } from '../../../lib/supabase';
 
 interface BDNUploadDrawerProps {
   open: boolean;
@@ -70,6 +71,50 @@ export function BDNUploadDrawer({ open, onClose }: BDNUploadDrawerProps) {
     try {
       const result = await startBunkeringSession(analysis);
       setSession(result);
+
+      /* Mirror the new session into Supabase as HALTED — a brand-new BDN
+       * upload hasn't been started yet, so its operational status is
+       * HALTED until an operator confirms and ticks begin. We upsert
+       * (idempotent on `session_id`) so this works whether the Python
+       * backend wrote to Supabase too or not — single source of truth
+       * for the Sessions list either way. */
+      const ex = analysis.extracted;
+      const bdnQty = Number(ex.qty_mt ?? result.bdn_qty_mt ?? 0);
+      const sessionRow = {
+        session_id:    result.session_id,
+        vessel_name:   ex.vessel_name   ?? null,
+        vessel_imo:    ex.vessel_imo    ?? null,
+        barge_name:    ex.barge_name    ?? null,
+        barge_imo:     ex.barge_imo     ?? null,
+        supplier_name: ex.supplier_name ?? null,
+        port:          ex.port          ?? null,
+        fuel_grade:    ex.grade         ?? null,
+        bdn_qty_mt:    bdnQty,
+        mfm_qty_mt:    0,
+        dev_mt:        0,
+        dev_pct:       0,
+        risk_score:    0,
+        verdict:       'PENDING',
+        status:        'HALTED',
+        delivery_date: ex.delivery_date ?? null,
+        start_time:    ex.time_start    ?? null,
+        created_at:    new Date().toISOString(),
+      };
+      const { error: upsertErr } = await supabase
+        .from('sessions')
+        .upsert(sessionRow, { onConflict: 'session_id' });
+      if (upsertErr) {
+        // Surface but don't roll back — the in-memory orchestrator row
+        // is still valid even if the DB mirror failed (e.g. RLS, missing
+        // column). The user sees the error message and can retry.
+        // eslint-disable-next-line no-console
+        console.warn('[BDNUpload] Supabase upsert failed:', upsertErr.message);
+      } else {
+        // Tell useSessionsList to refetch immediately — without this it
+        // waits up to 30 s for the next NowClock refetchTick.
+        window.dispatchEvent(new CustomEvent('bunkerguard:sessions-changed'));
+      }
+
       setUploadState('created');
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : String(e));
