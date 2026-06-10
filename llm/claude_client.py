@@ -30,7 +30,65 @@ MODEL = "claude-sonnet-4-6"
 MAX_TOKENS = 4096
 JSON_RETRIES = 2  # JSON-parse-error retries only; SDK handles network retries
 
+# JSON-Schema keywords the structured-outputs *raw* API rejects with a 400.
+# The SDK strips these automatically, but only inside ``messages.parse()`` /
+# ``messages.stream()``; ``messages.create()`` (what we call) sends the schema
+# verbatim. We therefore replicate the strip ourselves — see _sanitize_schema.
+_UNSUPPORTED_CONSTRAINTS = (
+    "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum",
+    "minLength", "maxLength", "pattern", "minItems", "maxItems",
+    "multipleOf",
+)
+
 _client: Optional[Any] = None
+
+
+def _sanitize_schema(node: Any) -> Any:
+    """Make a JSON schema acceptable to ``messages.create`` structured outputs.
+
+    The raw structured-outputs API only accepts a strict subset of JSON Schema.
+    Two things our hand-written schemas use are rejected with a 400:
+
+    1. List-form union types, e.g. ``{"type": ["string", "null"]}`` — must be
+       expressed as ``anyOf``.
+    2. Validation keywords such as ``minimum`` / ``maximum`` — must be removed
+       (we fold them into the field description so the model still sees them).
+
+    This mirrors ``anthropic.lib._parse._transform.transform_schema``, which the
+    SDK applies for ``parse()`` / ``stream()`` but *not* for ``create()``.
+    Recurses through ``properties`` / ``items`` / ``anyOf`` / ``$defs``.
+    """
+    if not isinstance(node, dict):
+        return node
+
+    node = dict(node)
+
+    # 1. list-form type -> anyOf
+    t = node.get("type")
+    if isinstance(t, list):
+        node.pop("type")
+        node["anyOf"] = [{"type": x} for x in t]
+
+    # 2. strip unsupported constraints, preserving intent in the description
+    stripped = {k: node.pop(k) for k in _UNSUPPORTED_CONSTRAINTS if k in node}
+    if stripped:
+        existing = node.get("description", "")
+        extra = ", ".join(f"{k}: {v}" for k, v in stripped.items())
+        node["description"] = (f"{existing} " if existing else "") + f"({extra})"
+
+    # 3. recurse into nested schemas
+    for key in ("properties", "$defs", "definitions"):
+        sub = node.get(key)
+        if isinstance(sub, dict):
+            node[key] = {k: _sanitize_schema(v) for k, v in sub.items()}
+    if "items" in node:
+        node["items"] = _sanitize_schema(node["items"])
+    for key in ("anyOf", "oneOf", "allOf"):
+        sub = node.get(key)
+        if isinstance(sub, list):
+            node[key] = [_sanitize_schema(v) for v in sub]
+
+    return node
 
 
 def _get_client() -> Any:
@@ -83,7 +141,7 @@ def call_claude(
     }
     if json_schema is not None:
         kwargs["output_config"] = {
-            "format": {"type": "json_schema", "schema": json_schema},
+            "format": {"type": "json_schema", "schema": _sanitize_schema(json_schema)},
         }
 
     last_err: Optional[str] = None
@@ -120,6 +178,98 @@ def call_claude(
         "raw": last_text,
         "_usage": last_usage,
     }
+
+
+def call_claude_with_tools(
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    tools: list[dict],
+    dispatch,
+    prior_messages: Optional[list[dict]] = None,
+    max_iterations: int = 6,
+    max_tokens: int = MAX_TOKENS,
+    cache_system: bool = True,
+) -> dict:
+    """Run a Claude tool-use loop and return the final answer.
+
+    Args:
+        system_prompt: stable, cacheable instructions for the agent.
+        user_prompt: the officer's question.
+        tools: Anthropic tool specs (see CopilotTools.TOOL_SPECS).
+        dispatch: callable ``(name, args) -> dict`` that runs one tool.
+        max_iterations: cap on Claude<->tool rounds. Officer flow rarely needs
+            more than 3; the cap is just a runaway guard.
+
+    Returns:
+        ``{"answer": <final text>, "tool_calls": [...], "_usage": {...}}``
+        or ``{"error": <msg>, "_usage": {...}}`` on failure. ``tool_calls``
+        is the full transcript so the UI can render the chart/PDF paths the
+        tools produced.
+    """
+    client = _get_client()
+
+    system_block: list[dict[str, Any]] = [{"type": "text", "text": system_prompt}]
+    if cache_system:
+        system_block[0]["cache_control"] = {"type": "ephemeral"}
+
+    messages: list[dict[str, Any]] = list(prior_messages or [])
+    messages.append({"role": "user", "content": user_prompt})
+    tool_calls: list[dict[str, Any]] = []
+    usage_total = {"input_tokens": 0, "output_tokens": 0,
+                   "cache_read_input_tokens": 0,
+                   "cache_creation_input_tokens": 0, "model": MODEL}
+
+    for _ in range(max_iterations):
+        try:
+            response = client.messages.create(
+                model=MODEL,
+                max_tokens=max_tokens,
+                system=system_block,
+                tools=tools,
+                messages=messages,
+            )
+        except Exception as e:
+            log.exception("claude_tool_call_failed")
+            return {"error": f"{type(e).__name__}: {e}", "_usage": usage_total}
+
+        u = response.usage
+        usage_total["input_tokens"] += u.input_tokens
+        usage_total["output_tokens"] += u.output_tokens
+        usage_total["cache_read_input_tokens"] += getattr(
+            u, "cache_read_input_tokens", 0) or 0
+        usage_total["cache_creation_input_tokens"] += getattr(
+            u, "cache_creation_input_tokens", 0) or 0
+
+        # Append assistant turn (text + tool_use blocks) verbatim.
+        messages.append({"role": "assistant", "content": response.content})
+
+        if response.stop_reason != "tool_use":
+            answer = "".join(b.text for b in response.content
+                             if getattr(b, "type", None) == "text").strip()
+            return {"answer": answer, "tool_calls": tool_calls,
+                    "_usage": usage_total}
+
+        # Run every tool_use block in this turn, return all results in one
+        # user message — required by the Anthropic API.
+        tool_results: list[dict[str, Any]] = []
+        for block in response.content:
+            if getattr(block, "type", None) != "tool_use":
+                continue
+            name = block.name
+            args = block.input or {}
+            log.info("tool_call", extra={"tool": name, "args": args})
+            result = dispatch(name, args) or {}
+            tool_calls.append({"name": name, "args": args, "result": result})
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": block.id,
+                "content": json.dumps(result, default=str),
+            })
+        messages.append({"role": "user", "content": tool_results})
+
+    return {"error": f"tool loop exceeded {max_iterations} iterations",
+            "tool_calls": tool_calls, "_usage": usage_total}
 
 
 def _try_parse_json(text: str) -> Optional[dict]:

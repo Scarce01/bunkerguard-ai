@@ -79,6 +79,11 @@ def generate_all(
           lambda v, o: _pdf_certificate(v, blockchain, chart_paths.get("qr_code"), o),
           view, out, results, verbose)
 
+    # ---------- on-deck decision console (no heavy deps; always renders) ----------
+    _safe("decision_console",
+          lambda v, o: _decision_console(v, blockchain, o),
+          view, out, results, verbose)
+
     # ---------- data exports ----------
     _safe("json_full",
           lambda v, o: _export_json(v, blockchain, o), view, out, results, verbose)
@@ -148,6 +153,11 @@ def _pdf_certificate(view: ViewBundle, blockchain: Optional[dict],
     from .pdf_certificate import generate_certificate
     return generate_certificate(view, blockchain=blockchain,
                                 qr_path=qr_path, output_dir=out)
+
+
+def _decision_console(view: ViewBundle, blockchain: Optional[dict], out: Path) -> Path:
+    from .decision_console import generate_decision_console
+    return generate_decision_console(view, output_dir=out, blockchain=blockchain)
 
 
 def _export_json(view: ViewBundle, blockchain: Optional[dict], out: Path) -> Path:

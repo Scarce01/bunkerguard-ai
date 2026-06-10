@@ -1,0 +1,80 @@
+{
+  "_usage": {
+    "model": "us.anthropic.claude-sonnet-4-20250514-v1:0",
+    "provider": "bedrock",
+    "input_tokens": 3041,
+    "output_tokens": 1447
+  },
+  "header": {
+    "port": "Singapore, Eastern Anchorage",
+    "barge_name": "ALLI",
+    "fuel_grade": "VLSFO RMG 380",
+    "vessel_imo": 9776002,
+    "vessel_name": "EVER GIVEN",
+    "delivery_end": "14:32:00",
+    "bdn_reference": "BDN-SG-2026-06-0016",
+    "delivery_date": "2026-06-10",
+    "supplier_name": "BunkerGuard Demo Supplier Gamma Pte Ltd",
+    "delivery_start": "10:15:00",
+    "supplier_licence": "DEMO-MPA-LIC-003"
+  },
+  "lop_draft": "LETTER OF PROTEST\n\nTo: BunkerGuard Demo Supplier Gamma Pte Ltd\nFrom: M/V EVER GIVEN (IMO: 9776002)\nDate: 2026-06-10\nPort: Singapore, Eastern Anchorage\n\nRe: Bunker Delivery Note BDN-SG-2026-06-0016 - Quantity Discrepancy\n\nWe hereby formally protest the bunker delivery completed on 2026-06-10 from barge ALLI for the following reasons:\n\n1. QUANTITY MISMATCH: Your BDN declares 500.0 MT of VLSFO RMG 380, however our calibrated Mass Flow Meter (MFM) recorded only 481.2 MT actually delivered, representing a shortfall of 18.8 MT (-3.76%).\n\n2. REGULATORY NON-COMPLIANCE: This deviation exceeds the 0.5% tolerance specified in IMO MEPC.1/Circ.891 guidelines for bunker quantity verification.\n\n3. FINANCIAL IMPACT: The quantity shortfall represents approximately USD 10,998 in value based on current VLSFO market rates.\n\nWe demand immediate rectification of this discrepancy before BDN acceptance. This protest is issued to preserve our rights under the bunker supply contract and applicable maritime law.\n\nChief Engineer: _________________\nDate: _________________\nVessel Stamp: _________________",
+  "report_id": "RPT-SES-2026-016-20260609T160053Z",
+  "session_id": "SES-2026-016",
+  "report_hash": "522f4cb92b6e6fbd961bddfe0c3cb9ccafb62eca2477be00edcdc360972b7cc5",
+  "ai_narrative": "Critical quantity mismatch detected: MFM measured 481.2 MT against BDN declared 500.0 MT, representing a shortfall of 18.8 MT (-3.76%). This deviation exceeds the 0.5% tolerance threshold by 752% and violates MEPC.1/Circ.891 guidelines. The trajectory deviation pattern observed at 1.5 hours (10.3% below expected) indicates systematic under-delivery throughout the operation. Financial impact calculated at USD 10,998 based on VLSFO spot price of USD 585.0 per MT.",
+  "generated_at": "2026-06-09T16:00:53Z",
+  "anomaly_summary": {
+    "anomalies": [
+      {
+        "rule_id": "A01",
+        "severity": "HIGH",
+        "rule_name": "Quantity Trajectory Deviation",
+        "timestamp": "2026-06-10T11:45:00+00:00",
+        "description": "Delivery 10.3% below trajectory at 1.5hr mark. Consistent with prior pattern."
+      },
+      {
+        "rule_id": "A02",
+        "severity": "CRITICAL",
+        "rule_name": "Quantity Final Mismatch",
+        "timestamp": "2026-06-10T14:32:00+00:00",
+        "description": "Final MFM 481.2 MT vs BDN 500.0 MT. Short 18.8 MT (3.76%). Est. impact: USD $11,000."
+      }
+    ],
+    "high_count": 1,
+    "medium_count": 0,
+    "critical_count": 1,
+    "total_anomalies": 2
+  },
+  "risk_assessment": {
+    "final_score": 78,
+    "risk_category": "CRITICAL",
+    "recommended_verdict": "REFUSE_TO_SIGN",
+    "similar_incidents_30d": 0
+  },
+  "sign_off_status": "REFUSE_TO_SIGN",
+  "compliance_flags": {
+    "ais_verified": true,
+    "grade_matches_brf": true,
+    "marpol_sulphur_ok": true,
+    "mpa_licence_valid": true,
+    "signatures_complete": true,
+    "solas_flash_point_ok": true,
+    "quantity_within_tolerance": false
+  },
+  "quantity_comparison": {
+    "discrepancy_mt": -18.8,
+    "bdn_declared_mt": 500.0,
+    "discrepancy_pct": -3.76,
+    "mfm_measured_mt": 481.2,
+    "financial_impact_usd": 10998,
+    "vlsfo_spot_price_per_mt": 585.0
+  },
+  "recommended_actions": [
+    "1. Refuse to sign BDN-SG-2026-06-0016 until quantity discrepancy is resolved",
+    "2. Issue formal Letter of Protest citing MEPC.1/Circ.891 non-compliance",
+    "3. Demand supplier provide written explanation for 18.8 MT shortfall",
+    "4. Request MFM calibration certificates and flow meter verification records",
+    "5. Notify P&I club and flag state of quantity mismatch exceeding tolerance"
+  ]
+}

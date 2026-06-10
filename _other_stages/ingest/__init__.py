@@ -172,7 +172,7 @@ def _load_geofences(data_dir: Path) -> Dict[str, GeofenceZone]:
     """Build {session_id -> GeofenceZone} from Anchorage_Geofences.csv."""
     out: Dict[str, GeofenceZone] = {}
     try:
-        rows = list(csv.DictReader(open(data_dir / "Anchorage_Geofences.csv")))
+        rows = list(csv.DictReader(open(data_dir / "Anchorage_Geofences.csv", encoding="utf-8")))
     except FileNotFoundError:
         return out
     for r in rows:
@@ -205,7 +205,7 @@ def _load_barge_ais(data_dir: Path) -> Dict[str, list[BargeAISObservation]]:
     """
     out: Dict[str, list[BargeAISObservation]] = {}
     try:
-        rows = list(csv.DictReader(open(data_dir / "Barge_AIS_References.csv")))
+        rows = list(csv.DictReader(open(data_dir / "Barge_AIS_References.csv", encoding="utf-8")))
     except FileNotFoundError:
         return out
     for r in rows:
@@ -226,7 +226,7 @@ def _load_barge_ais(data_dir: Path) -> Dict[str, list[BargeAISObservation]]:
 # ============================================================ supplier lookup
 
 def _load_suppliers(data_dir: Path) -> Dict[str, SupplierRef]:
-    rows = list(csv.DictReader(open(data_dir / "Supplier_Registry.csv")))
+    rows = list(csv.DictReader(open(data_dir / "Supplier_Registry.csv", encoding="utf-8")))
     out: Dict[str, SupplierRef] = {}
     for r in rows:
         name = r["Name"].strip()
@@ -253,7 +253,7 @@ def _load_suppliers(data_dir: Path) -> Dict[str, SupplierRef]:
 
 
 def _load_fuel_specs(data_dir: Path) -> Dict[FuelGrade, FuelSpec]:
-    rows = list(csv.DictReader(open(data_dir / "Fuel_Parameters.csv")))
+    rows = list(csv.DictReader(open(data_dir / "Fuel_Parameters.csv", encoding="utf-8")))
     out: Dict[FuelGrade, FuelSpec] = {}
     for r in rows:
         try:
@@ -276,7 +276,7 @@ def _load_history(data_dir: Path) -> Dict[str, HistoryStats]:
     """Aggregate per-supplier-30d history. Keyed by supplier_id."""
     from collections import defaultdict
     bucket: Dict[str, list] = defaultdict(list)
-    for r in csv.DictReader(open(data_dir / "Historical_Transactions.csv")):
+    for r in csv.DictReader(open(data_dir / "Historical_Transactions.csv", encoding="utf-8")):
         bucket[r["Supplier ID"].strip()].append(r)
 
     out: Dict[str, HistoryStats] = {}
@@ -302,7 +302,7 @@ def _load_mfm(data_dir: Path) -> Dict[str, List[MFMPacket]]:
     """
     from collections import defaultdict
     raw: Dict[str, list] = defaultdict(list)
-    for r in csv.DictReader(open(data_dir / "MFM_Stream.csv")):
+    for r in csv.DictReader(open(data_dir / "MFM_Stream.csv", encoding="utf-8")):
         raw[r["Session ID"].strip()].append(r)
 
     bucket: Dict[str, List[MFMPacket]] = {}
@@ -346,7 +346,7 @@ def _load_mfm(data_dir: Path) -> Dict[str, List[MFMPacket]]:
 
 def _load_bdns(data_dir: Path) -> Dict[str, BDNDoc]:
     out: Dict[str, BDNDoc] = {}
-    for r in csv.DictReader(open(data_dir / "BDN_Records.csv")):
+    for r in csv.DictReader(open(data_dir / "BDN_Records.csv", encoding="utf-8")):
         sid = r["Session ID"].strip()
         start = _dt(r["Date"], r["Start"])
         end = _dt(r["Date"], r["End"], fallback=start)
@@ -385,7 +385,7 @@ def load_sessions(data_dir: Optional[Path] = None) -> List[SessionInput]:
     barge_ais_map = _load_barge_ais(d)
 
     sessions: List[SessionInput] = []
-    for r in csv.DictReader(open(d / "Sessions.csv")):
+    for r in csv.DictReader(open(d / "Sessions.csv", encoding="utf-8")):
         sid = r["Session ID"].strip()
         sup_name = r["Supplier"].strip()
         sup = suppliers.get(sup_name) or SupplierRef(

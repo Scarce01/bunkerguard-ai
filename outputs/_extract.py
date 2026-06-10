@@ -190,6 +190,8 @@ def _risk_view(package: "RiskPackage", bdn_view: dict, mfm_view: dict) -> dict:
         "requires_lop": package.requires_lop,
         "requires_surveyor": package.requires_surveyor,
         "requires_resample": package.requires_resample,
+        "escalation_path": list(getattr(package, "escalation_path", []) or []),
+        "dispute_window_hours": getattr(package, "dispute_window_hours", 72),
         "because": list(package.because),
         "components": {
             "severity_score": a.components.anomaly_severity,
