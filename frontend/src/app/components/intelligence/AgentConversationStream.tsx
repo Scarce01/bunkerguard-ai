@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { FileText, Play, RotateCcw } from 'lucide-react';
 import { EvidenceReportDrawer } from '../evidence/EvidenceReportDrawer';
+import { KiroGhostBadge, AGENT_AVATAR_SRC } from '../ai/KiroGhost';
 
 type AgentKey = 'surveyor' | 'investigator' | 'compliance' | 'decision' | 'chief';
 
@@ -167,14 +168,14 @@ export function AgentConversationStream({ sessionId, onActiveEdgeChange }: Props
           boxShadow: `0 4px 16px ${AGENT_META[toast.agent].color}30`,
           animation: 'fadeInRight 240ms ease-out',
         }}>
-          <div style={{
-            width: 18, height: 18, borderRadius: 4,
-            background: `${AGENT_META[toast.agent].color}30`,
-            border: `1px solid ${AGENT_META[toast.agent].color}`,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 9, fontWeight: 800, color: AGENT_META[toast.agent].color,
-            fontFamily: "'JetBrains Mono', monospace",
-          }}>{AGENT_META[toast.agent].glyph}</div>
+          {/* Toast avatar — Kiro ghost (or Exa logo for Investigator). */}
+          <KiroGhostBadge
+            size={18}
+            color={AGENT_META[toast.agent].color}
+            shape="rounded"
+            src={toast.agent === 'investigator' ? AGENT_AVATAR_SRC.exa : AGENT_AVATAR_SRC.kiro}
+          />
+
           <span style={{ fontSize: 10, fontWeight: 700, color: AGENT_META[toast.agent].color, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{toast.text}</span>
         </div>
       )}
@@ -190,22 +191,22 @@ export function AgentConversationStream({ sessionId, onActiveEdgeChange }: Props
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10 }}>
                 <span style={{
                   display: 'inline-flex', alignItems: 'center', gap: 6,
-                  padding: '2px 8px', borderRadius: 4,
+                  padding: '2px 8px 2px 4px', borderRadius: 4,
                   background: `${from.color}18`, border: `1px solid ${from.color}38`,
                   color: from.color, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
                 }}>
-                  <span style={{ fontSize: 9 }}>{from.glyph}</span> {from.name}
+                  <KiroGhostBadge size={14} color={from.color} shape="rounded" src={m.from === 'investigator' ? AGENT_AVATAR_SRC.exa : AGENT_AVATAR_SRC.kiro} /> {from.name}
                 </span>
                 {to && (
                   <>
                     <span style={{ color: '#4E7A9A', fontSize: 12 }}>→</span>
                     <span style={{
                       display: 'inline-flex', alignItems: 'center', gap: 6,
-                      padding: '2px 8px', borderRadius: 4,
+                      padding: '2px 8px 2px 4px', borderRadius: 4,
                       background: `${to.color}18`, border: `1px solid ${to.color}38`,
                       color: to.color, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
                     }}>
-                      <span style={{ fontSize: 9 }}>{to.glyph}</span> {to.name}
+                      <KiroGhostBadge size={14} color={to.color} shape="rounded" src={m.to === 'investigator' ? AGENT_AVATAR_SRC.exa : AGENT_AVATAR_SRC.kiro} /> {to.name}
                     </span>
                   </>
                 )}

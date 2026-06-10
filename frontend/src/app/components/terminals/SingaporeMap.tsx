@@ -679,8 +679,23 @@ function DeliveryOverlay({ map, deliveries, onClick, muted }: DeliveryOverlayPro
                 </div>
                 <div style={{ display: 'flex', gap: 10, marginTop: 6, fontSize: 9, color: '#A8C8E8', fontFamily: "'JetBrains Mono', monospace" }}>
                   <span>BDN {d.bdn_qty_mt ?? '—'} MT</span>
-                  <span>MFM {d.mfm_qty_mt ?? '—'} MT</span>
+                  <span>MFM {typeof d.mfm_qty_mt === 'number' ? d.mfm_qty_mt.toFixed(1) : '—'} MT</span>
                   {d.risk_score != null && <span style={{ color: c, fontWeight: 700 }}>RISK {d.risk_score}</span>}
+                </div>
+                {/* Shared-clock progress — identical % to the Live Session
+                    "TRANSFER" KPI and the Sessions list progress column. */}
+                <div style={{ marginTop: 6 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: '#7FA5D3', fontWeight: 700, letterSpacing: 0.8, marginBottom: 2 }}>
+                    <span>TRANSFER</span>
+                    <span style={{ color: '#E5F2FF', fontFamily: "'JetBrains Mono', monospace" }}>{d.progress_pct}%</span>
+                  </div>
+                  <div style={{ height: 4, background: 'rgba(255,255,255,0.07)', borderRadius: 2, overflow: 'hidden' }}>
+                    <div style={{
+                      width: `${d.progress_pct}%`, height: '100%',
+                      background: `linear-gradient(90deg, ${c}, ${c}cc)`,
+                      transition: 'width 800ms ease-out',
+                    }} />
+                  </div>
                 </div>
                 <div style={{ fontSize: 8, color: '#3D5A75', marginTop: 4 }}>Click → isometric 3D view</div>
               </div>

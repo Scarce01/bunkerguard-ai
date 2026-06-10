@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { supabase } from './supabase';
-import { aggregateSupplierCarbon, mapCarbonSession, type CarbonRiskLevel } from './carbon';
 
 export interface SupplierListRow {
   id: string;
@@ -14,9 +13,6 @@ export interface SupplierListRow {
   avgDevPct: number | null;
   trend: string | null;
   flag: string | null;
-  totalCarbonExposure: number;
-  carbonRiskLevel: CarbonRiskLevel;
-  carbonEstimatedFromAvailableData: boolean;
 }
 
 export interface SuppliersListData {
@@ -33,22 +29,17 @@ export function useSuppliersList(): SuppliersListData {
     let cancelled = false;
     setData((d) => ({ ...d, loading: true, error: null }));
 
-    Promise.all([
-      supabase.from('suppliers').select('*').order('reputation_score', { ascending: true, nullsFirst: true }),
-      supabase.from('sessions').select('*'),
-    ]).then(([supplierResult, sessionResult]) => {
+    supabase
+      .from('suppliers')
+      .select('*')
+      .order('reputation_score', { ascending: true, nullsFirst: true })
+      .then(({ data: rows, error }) => {
         if (cancelled) return;
-        if (supplierResult.error || sessionResult.error) {
-          setData({ suppliers: [], loading: false, error: supplierResult.error?.message ?? sessionResult.error?.message ?? 'Unable to load suppliers' });
+        if (error) {
+          setData({ suppliers: [], loading: false, error: error.message });
           return;
         }
-        const carbonBySupplier = new Map(
-          aggregateSupplierCarbon((sessionResult.data ?? []).map((row: any) => mapCarbonSession(row)))
-            .map((row) => [row.supplier, row]),
-        );
-        const suppliers: SupplierListRow[] = (supplierResult.data ?? []).map((s: any) => {
-          const carbon = carbonBySupplier.get(s.name);
-          return ({
+        const suppliers: SupplierListRow[] = (rows ?? []).map((s: any) => ({
           id: s.id,
           name: s.name,
           mpaLicence: s.mpa_licence,
@@ -60,11 +51,7 @@ export function useSuppliersList(): SuppliersListData {
           avgDevPct: s.avg_dev_pct,
           trend: s.trend,
           flag: s.flag,
-          totalCarbonExposure: carbon?.carbonTco2e ?? Number(s.estimated_carbon_tco2e ?? 0),
-          carbonRiskLevel: carbon?.carbonRiskLevel ?? s.carbon_risk_level ?? 'LOW',
-          carbonEstimatedFromAvailableData: carbon?.estimatedFromAvailableData ?? s.estimated_carbon_tco2e == null,
-        });
-        });
+        }));
         setData({ suppliers, loading: false, error: null });
       });
 

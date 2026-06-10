@@ -10,12 +10,10 @@ import {
   BakeShadows,
 } from '@react-three/drei';
 import * as THREE from 'three';
-import { TerminalInfo, statusColor, statusLabel, VESSELS_BY_TERMINAL, VesselSpot } from '../../../data/terminals';
+import { TerminalInfo, statusColor, statusLabel, VESSELS_BY_TERMINAL, VESSEL_GLB, VesselSpot } from '../../../data/terminals';
 import { ArrowLeft, Loader2, RotateCcw, Ship } from 'lucide-react';
 import { useVesselSession } from '../../../lib/useVesselSession';
 import { useVesselStatus, type VesselStatusRow } from '../../../lib/useVesselStatus';
-import { ModelErrorBoundary, ModelUnavailable } from '../three/ModelErrorBoundary';
-import { ProceduralVessel } from '../three/ProceduralVessel';
 
 interface Props {
   terminal: TerminalInfo;
@@ -580,7 +578,34 @@ function Vessel({
   dimmed: boolean;
   onClick: () => void;
 }) {
+  const gltf = useGLTF(VESSEL_GLB);
   const ref = useRef<THREE.Group>(null);
+
+  const centeredScene = useMemo(() => {
+    const s = gltf.scene.clone(true);
+    s.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(s);
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    s.position.x -= center.x;
+    s.position.z -= center.z;
+    s.position.y -= box.min.y;
+    // Disable shadow casts/receives on the 480-mesh vessel. With 3 vessels
+    // in scene that's 1440 extra meshes per shadow pass — kills the WebGL
+    // context on top of the terminal's ~5k meshes. ContactShadows still
+    // grounds the vessel visually below.
+    s.traverse((o) => {
+      if ((o as THREE.Mesh).isMesh) {
+        const m = o as THREE.Mesh;
+        m.castShadow = false;
+        m.receiveShadow = false;
+        // No tint applied — use the GLB's baked materials so every vessel has
+        // the same livery (black hull, rust-brown deck tanks, white bridge),
+        // matching the original Blender file.
+      }
+    });
+    return s;
+  }, [gltf]);
 
   // Dim non-focused vessels by hiding entirely — avoids messing with material
   // transparency (which would force the GPU to depth-sort vessel hull pieces
@@ -600,7 +625,7 @@ function Vessel({
       onPointerOver={(e) => { e.stopPropagation(); (document.body.style as any).cursor = 'pointer'; }}
       onPointerOut={() => { (document.body.style as any).cursor = ''; }}
     >
-      <ProceduralVessel />
+      <primitive object={centeredScene} />
       {/* Focus glow ring on the sea surface beneath the vessel */}
       {isFocused && (
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.5, 0]}>
@@ -1006,7 +1031,6 @@ function CloudLoadingBackdrop() {
 export function Terminal3DViewer({ terminal, onBack, onVesselChange }: Props) {
   const [introDone, setIntroDone] = useState(false);
   const [modelLoaded, setModelLoaded] = useState(false);
-  const [modelError, setModelError] = useState(false);
   const [realRadius, setRealRadius] = useState<number>(
     Math.max(terminal.bboxSize[0], terminal.bboxSize[1]) / 2 || 500,
   );
@@ -1019,7 +1043,6 @@ export function Terminal3DViewer({ terminal, onBack, onVesselChange }: Props) {
   // Reset everything whenever a new terminal is opened.
   useEffect(() => {
     setModelLoaded(false);
-    setModelError(false);
     setIntroDone(false);
     setSelectedVessel(null);
     setVesselDiving(false);
@@ -1100,29 +1123,6 @@ export function Terminal3DViewer({ terminal, onBack, onVesselChange }: Props) {
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%', background: '#02060A', overflow: 'hidden' }}>
-      <ModelErrorBoundary
-        resetKey={terminal.id}
-        onError={() => setModelError(true)}
-        fallback={(
-          <ModelUnavailable
-            title={`${terminal.name} model unavailable`}
-            detail="The dashboard remains operational. Return to the map or use the live data panels."
-            action={(
-              <button onClick={onBack} style={{
-                padding: '8px 16px',
-                background: 'rgba(46,168,255,0.15)',
-                border: '1px solid rgba(46,168,255,0.4)',
-                color: '#2EA8FF',
-                borderRadius: 6,
-                cursor: 'pointer',
-                fontWeight: 700,
-              }}>
-                Back to map
-              </button>
-            )}
-          />
-        )}
-      >
       <Canvas
         shadows
         dpr={[1, 2]}
@@ -1247,18 +1247,17 @@ export function Terminal3DViewer({ terminal, onBack, onVesselChange }: Props) {
 
         <BakeShadows />
       </Canvas>
-      </ModelErrorBoundary>
 
       {/* Cloud cover while the GLB downloads — covers the whole 3D area.
           Fades out once the model is mounted, revealing the terminal beneath. */}
-      {!modelError && <div style={{
+      <div style={{
         position: 'absolute', inset: 0,
         opacity: modelLoaded ? 0 : 1,
         transition: 'opacity 700ms cubic-bezier(0.4, 0, 0.2, 1)',
         pointerEvents: modelLoaded ? 'none' : 'auto',
       }}>
         <CloudLoadingBackdrop />
-      </div>}
+      </div>
 
       {/* Vessel dive cloud pass — same effect as the map → terminal dive */}
       {/* No cloud pass on vessel dive — kept minimal per user request. */}

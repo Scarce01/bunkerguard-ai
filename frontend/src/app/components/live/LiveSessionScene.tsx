@@ -1,9 +1,8 @@
 import { Suspense, useEffect, useMemo, useRef } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Environment, Html } from '@react-three/drei';
+import { useGLTF, Environment, Html } from '@react-three/drei';
 import * as THREE from 'three';
-import { ModelErrorBoundary, ModelUnavailable } from '../three/ModelErrorBoundary';
-import { ProceduralVessel } from '../three/ProceduralVessel';
+import { VESSEL_GLB } from '../../../data/terminals';
 
 interface SceneProps {
   /** [BDN qty MT, MFM qty MT] — drives the hose-flow animation speed. */
@@ -36,9 +35,41 @@ const FRAME_HALF_DEPTH = 80;    // vertical extent (Z axis) we want visible
 function VesselModel({
   position, rotationY, scale, color,
 }: { position: [number, number, number]; rotationY: number; scale: number; color?: string }) {
+  const gltf = useGLTF(VESSEL_GLB);
+  const centeredScene = useMemo(() => {
+    const s = gltf.scene.clone(true);
+    s.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(s);
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    s.position.x -= center.x;
+    s.position.z -= center.z;
+    s.position.y -= box.min.y;
+    s.traverse((o) => {
+      if ((o as THREE.Mesh).isMesh) {
+        const m = o as THREE.Mesh;
+        m.castShadow = false;
+        m.receiveShadow = false;
+        if (color) {
+          const tint = new THREE.Color(color);
+          const apply = (mat: THREE.Material) => {
+            const std = mat as THREE.MeshStandardMaterial;
+            const cloned = std.clone();
+            if ((cloned as any).color) (cloned as any).color = tint.clone();
+            cloned.needsUpdate = true;
+            return cloned;
+          };
+          if (Array.isArray(m.material)) m.material = m.material.map(apply);
+          else if (m.material) m.material = apply(m.material);
+        }
+      }
+    });
+    return s;
+  }, [gltf, color]);
+
   return (
     <group position={position} rotation={[0, (rotationY * Math.PI) / 180, 0]} scale={scale}>
-      <ProceduralVessel hullColor={color} />
+      <primitive object={centeredScene} />
     </group>
   );
 }
@@ -339,17 +370,13 @@ function Scene({ bdnQty, mfmQty, driveGainPct, commercialVesselName, bargeVessel
 
 export function LiveSessionScene(props: SceneProps) {
   return (
-    <ModelErrorBoundary
-      fallback={<ModelUnavailable detail="Session telemetry and risk controls remain available below." />}
+    <Canvas
+      shadows={false}
+      dpr={[1, 2]}
+      camera={{ position: [-15, 230, 15], fov: 50, near: 1, far: 1500 }}
+      gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, outputColorSpace: THREE.SRGBColorSpace }}
     >
-      <Canvas
-        shadows={false}
-        dpr={[1, 2]}
-        camera={{ position: [-15, 230, 15], fov: 50, near: 1, far: 1500 }}
-        gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, outputColorSpace: THREE.SRGBColorSpace }}
-      >
-        <Scene {...props} />
-      </Canvas>
-    </ModelErrorBoundary>
+      <Scene {...props} />
+    </Canvas>
   );
 }

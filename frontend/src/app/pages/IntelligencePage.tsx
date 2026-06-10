@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { PortCopilot } from '../components/PortCopilot';
+import { KiroGhostNode, AGENT_AVATAR_SRC } from '../components/ai/KiroGhost';
 import { SupplierProfilePanel } from '../components/details/SupplierProfilePanel';
 import { mockSupplierReputation } from '../../data/mockSupplierReputation';
 import { useSupplierReputation } from '../../lib/useSupplierReputation';
-import { useCarbonExposure } from '../../lib/useCarbonExposure';
 import { AgentConversationStream } from '../components/intelligence/AgentConversationStream';
 
 const CARD: React.CSSProperties = {
@@ -25,8 +25,27 @@ const TABS: { id: Tab; label: string }[] = [
 ];
 
 /* ── Fraud Intelligence Network with AI propagation ────────────── */
+/** Single label + value chip used in the AI-insights banner below the
+ *  network graph. Compact, fixed-width feel via min-width on the value. */
+function InsightStat({ label, value, color }: { label: string; value: string; color: string }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+      <span style={{ fontSize: 9, color: '#5A8AB4', textTransform: 'uppercase', letterSpacing: '0.10em', fontWeight: 700 }}>{label}</span>
+      <span style={{ fontSize: 14, fontWeight: 800, color, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '-0.01em' }}>{value}</span>
+    </div>
+  );
+}
+
 function NetworkGraph({ onSupplierClick, onVesselClick }: { onSupplierClick?: (supplier: string) => void; onVesselClick?: (session: number) => void }) {
   const [hovered, setHovered] = useState<string | null>(null);
+  /* Pinned agent — clicking an agent ghost locks its info panel open.
+   * Clicking the same agent again (or any non-agent node) unpins. Means
+   * the operator can read the agent's role without keeping their cursor
+   * frozen on the dot. */
+  const [pinnedAgent, setPinnedAgent] = useState<string | null>(null);
+  /* Effective focus for the tooltip — pinned agent wins over hover so a
+   * pinned panel doesn't flicker when the cursor leaves the chart. */
+  const focus = pinnedAgent ?? hovered;
 
   const suppliers = [
     { id: 'S1', x: 8,  y: 16, name: 'Supplier Gamma', risk: 'CRITICAL', score: 38, discrepancy: 2.31, flagged: '9/22' },
@@ -82,19 +101,20 @@ function NetworkGraph({ onSupplierClick, onVesselClick }: { onSupplierClick?: (s
     return '#2E7D6F';
   }
 
-  /* Hover propagation — when a node is hovered, its neighbours light up too. */
+  /* Hover propagation — when a node is hovered (or an agent is pinned),
+   * its neighbours light up too. */
   const isLit = (id: string): boolean => {
-    if (!hovered) return false;
-    if (hovered === id) return true;
-    // Hovering an agent lights all its incident edges/nodes
-    if (hovered.startsWith('A')) {
-      if (hovered === 'A1') return id === 'A2' || vessels.some(v => v.id === id);
-      if (hovered === 'A2') return id === 'A1' || id === 'A3' || suppliers.some(s => s.id === id);
-      if (hovered === 'A3') return id === 'A2' || id === 'A4';
-      if (hovered === 'A4') return id === 'A3' || (vessels.find(v => v.id === id)?.risk ?? 0) >= 70;
+    const f = focus;
+    if (!f) return false;
+    if (f === id) return true;
+    if (f.startsWith('A')) {
+      if (f === 'A1') return id === 'A2' || vessels.some(v => v.id === id);
+      if (f === 'A2') return id === 'A1' || id === 'A3' || suppliers.some(s => s.id === id);
+      if (f === 'A3') return id === 'A2' || id === 'A4';
+      if (f === 'A4') return id === 'A3' || (vessels.find(v => v.id === id)?.risk ?? 0) >= 70;
     }
-    if (hovered.startsWith('S')) return id === 'A2';
-    if (hovered.startsWith('V')) return id === 'A1' || ((vessels.find(v => v.id === hovered)?.risk ?? 0) >= 70 && id === 'A4');
+    if (f.startsWith('S')) return id === 'A2';
+    if (f.startsWith('V')) return id === 'A1' || ((vessels.find(v => v.id === f)?.risk ?? 0) >= 70 && id === 'A4');
     return false;
   };
 
@@ -215,12 +235,16 @@ function NetworkGraph({ onSupplierClick, onVesselClick }: { onSupplierClick?: (s
           );
         })}
 
-        {/* Supplier nodes with intelligence pulse */}
-        {suppliers.map(s => {
+        {/* Supplier nodes — Kiro ghost agents, one per supplier.
+            Each supplier has its own "agent" inside our system that watches
+            its history, registry, and discrepancy pattern. The ghost colour
+            reflects current risk (red CRITICAL / orange MODERATE / green LOW).
+            The risk score is rendered as a small chip below the ghost so
+            it's still scannable at a glance. */}
+        {suppliers.map((s, sIdx) => {
           const color = riskColor(s.risk);
           const isH = hovered === s.id;
           const isCritical = s.risk === 'CRITICAL';
-          const r = isH ? 12 : 10;
           return (
             <g key={s.id}
               style={{ cursor: 'pointer' }}
@@ -228,26 +252,38 @@ function NetworkGraph({ onSupplierClick, onVesselClick }: { onSupplierClick?: (s
               onMouseLeave={() => setHovered(null)}
               onClick={() => onSupplierClick?.(s.name)}
             >
-              {/* Pulsing outer ring for critical suppliers */}
+              {/* Extra pulsing ring for critical suppliers — same as before */}
               {isCritical && (
-                <circle cx={`${s.x}%`} cy={`${s.y}%`} r={r + 4} fill="none" stroke={color} strokeWidth="0.8" opacity="0.25">
-                  <animate attributeName="r" values={`${r + 4};${r + 9};${r + 4}`} dur="3s" repeatCount="indefinite"/>
-                  <animate attributeName="opacity" values="0.3;0;0.3" dur="3s" repeatCount="indefinite"/>
+                <circle cx={`${s.x}%`} cy={`${s.y}%`} r="7" fill="none" stroke={color} strokeWidth="0.8" opacity="0.3">
+                  <animate attributeName="r" values="5;9;5" dur="2.8s" repeatCount="indefinite"/>
+                  <animate attributeName="opacity" values="0.35;0;0.35" dur="2.8s" repeatCount="indefinite"/>
                 </circle>
               )}
-              {/* Glow halo */}
-              <circle cx={`${s.x}%`} cy={`${s.y}%`} r={r + 5} fill={color} opacity={isH ? 0.10 : 0.05} style={{ transition: 'all 200ms' }} />
-              {/* Main node */}
-              <circle cx={`${s.x}%`} cy={`${s.y}%`} r={r} fill={`${color}${isH ? '30' : '20'}`} stroke={color} strokeWidth={isH ? '1.8' : '1.3'} style={{ transition: 'all 200ms' }}>
-                {isCritical && <animate attributeName="opacity" values="1;0.75;1" dur="2.5s" repeatCount="indefinite"/>}
-              </circle>
-              {/* Score label */}
-              <text x={`${s.x}%`} y={`${s.y + 0.7}%`} textAnchor="middle" dominantBaseline="middle"
-                style={{ fontSize: '9px', fill: color, fontWeight: 700, fontFamily: 'monospace', pointerEvents: 'none' }}>
+              {/* Kiro ghost — supplier agent avatar */}
+              <KiroGhostNode
+                cx={s.x} cy={s.y}
+                size={isH ? 6 : 5}
+                color={color}
+                hovered={isH}
+                lit={isCritical}
+                idx={sIdx + 4 /* offset so pulses don't sync with agent column */}
+              />
+              {/* Risk-score chip — sits just below the ghost */}
+              <rect
+                x={`${s.x - 2.5}%`} y={`${s.y + 3.4}%`}
+                width="5%" height="2.4%"
+                rx="3" ry="3"
+                fill={`${color}28`}
+                stroke={color}
+                strokeWidth="0.8"
+                opacity={isH ? 1 : 0.85}
+              />
+              <text x={`${s.x}%`} y={`${s.y + 4.65}%`} textAnchor="middle" dominantBaseline="middle"
+                style={{ fontSize: '8.5px', fill: color, fontWeight: 800, fontFamily: 'monospace', pointerEvents: 'none' }}>
                 {s.score}
               </text>
               {/* Name label */}
-              <text x={`${s.x}%`} y={`${s.y + 5.5}%`} textAnchor="middle"
+              <text x={`${s.x}%`} y={`${s.y + 7.2}%`} textAnchor="middle"
                 style={{ fontSize: '9px', fill: isH ? '#BFD7F7' : '#91B4DA', fontFamily: 'sans-serif', pointerEvents: 'none', transition: 'fill 200ms' }}>
                 {s.name}
               </text>
@@ -255,12 +291,21 @@ function NetworkGraph({ onSupplierClick, onVesselClick }: { onSupplierClick?: (s
           );
         })}
 
-        {/* Vessel nodes with status indicators */}
+        {/* ── Vessel cards (right column) ─────────────────────────────
+           Each card is a clickable button that navigates to the session
+           detail page. Layout is now scannable at a distance:
+              left edge  →  big monospaced #SESSION
+              right edge →  risk-score chip in the row's risk colour
+              second row →  vessel name (truncated) + deviation %
+           Bigger card box (12% wide × 7% tall) + thicker stroke so the
+           numbers don't get lost behind cursor pulses or edge animations. */}
         {vessels.map(v => {
           const isH = hovered === v.id;
           const riskLevel = v.risk >= 70 ? 'CRITICAL' : v.risk >= 50 ? 'HIGH' : v.risk >= 30 ? 'MODERATE' : 'LOW';
           const color = riskColor(riskLevel);
           const isCritical = riskLevel === 'CRITICAL';
+          // Truncate vessel names that overflow the new wider card.
+          const shortName = v.name.length > 13 ? v.name.slice(0, 12) + '…' : v.name;
           return (
             <g key={v.id}
               style={{ cursor: 'pointer' }}
@@ -268,35 +313,80 @@ function NetworkGraph({ onSupplierClick, onVesselClick }: { onSupplierClick?: (s
               onMouseLeave={() => setHovered(null)}
               onClick={() => onVesselClick?.(v.session)}
             >
-              {/* Background glow for critical vessels */}
+              {/* Outer halo for critical sessions */}
               {isCritical && (
                 <rect
-                  x={`${v.x - 5.5}%`} y={`${v.y - 2.8}%`} width="11%" height="5.6%"
-                  rx="4" fill={color} opacity="0.06"
+                  x={`${v.x - 6.5}%`} y={`${v.y - 3.8}%`} width="13%" height="7.6%"
+                  rx="5" fill={color} opacity={isH ? 0.10 : 0.06}
                 />
               )}
-              {/* Main vessel card */}
+              {/* Card */}
               <rect
-                x={`${v.x - 5}%`} y={`${v.y - 2.5}%`} width="10%" height="5%"
-                rx="3" fill={isH ? `${color}25` : 'rgba(11,29,51,0.95)'}
-                stroke={color} strokeWidth={isH ? '1.5' : '1'}
-                opacity={isH ? 1 : 0.85}
+                x={`${v.x - 6}%`} y={`${v.y - 3.5}%`} width="12%" height="7%"
+                rx="4"
+                fill={isH ? `${color}28` : 'rgba(8,19,33,0.95)'}
+                stroke={color} strokeWidth={isH ? '1.6' : '1.1'}
+                opacity={isH ? 1 : 0.92}
                 style={{ transition: 'all 200ms' }}
               />
-              {/* Session indicator dot */}
-              <circle cx={`${v.x - 3.2}%`} cy={`${v.y}%`} r="1.2" fill={color} opacity="0.75"/>
-              {/* Session number */}
-              <text x={`${v.x - 1}%`} y={`${v.y + 0.4}%`} textAnchor="start" dominantBaseline="middle"
-                style={{ fontSize: '9px', fill: isH ? '#EAF4FF' : '#BFD7F7', fontFamily: 'monospace', fontWeight: 600, pointerEvents: 'none', transition: 'fill 200ms' }}>
+              {/* Left accent stripe — colour-coded by risk */}
+              <rect
+                x={`${v.x - 6}%`} y={`${v.y - 3.5}%`} width="0.45%" height="7%"
+                rx="2"
+                fill={color} opacity={isH ? 1 : 0.85}
+              />
+              {/* Big session number — primary, scannable */}
+              <text x={`${v.x - 5}%`} y={`${v.y - 0.8}%`} textAnchor="start" dominantBaseline="middle"
+                style={{
+                  fontSize: '13px', fontWeight: 800,
+                  fill: isH ? '#FFFFFF' : '#EAF4FF',
+                  fontFamily: "'JetBrains Mono', monospace",
+                  pointerEvents: 'none', transition: 'fill 200ms',
+                }}>
                 #{v.session}
               </text>
+              {/* Vessel name — secondary */}
+              <text x={`${v.x - 5}%`} y={`${v.y + 2.2}%`} textAnchor="start" dominantBaseline="middle"
+                style={{
+                  fontSize: '7.5px', fontWeight: 600,
+                  fill: isH ? '#BFD7F7' : '#7FA5D3',
+                  fontFamily: 'sans-serif',
+                  letterSpacing: '0.02em',
+                  pointerEvents: 'none', transition: 'fill 200ms',
+                }}>
+                {shortName}  ·  {v.deviation}%
+              </text>
+              {/* Risk-score chip on the right edge */}
+              <rect
+                x={`${v.x + 2.8}%`} y={`${v.y - 2.3}%`} width="3%" height="4.6%"
+                rx="3"
+                fill={`${color}30`} stroke={color} strokeWidth="0.8"
+                opacity={isH ? 1 : 0.95}
+              />
+              <text x={`${v.x + 4.3}%`} y={`${v.y - 0.05}%`} textAnchor="middle" dominantBaseline="middle"
+                style={{
+                  fontSize: '10px', fontWeight: 800,
+                  fill: color,
+                  fontFamily: "'JetBrains Mono', monospace",
+                  pointerEvents: 'none',
+                }}>
+                {v.risk}
+              </text>
+              {/* "open →" hint on hover so clicks feel discoverable */}
+              {isH && (
+                <text x={`${v.x + 4.3}%`} y={`${v.y + 2.5}%`} textAnchor="middle"
+                  style={{ fontSize: '6.5px', fontWeight: 700, fill: color, letterSpacing: '0.15em', pointerEvents: 'none' }}>
+                  OPEN →
+                </text>
+              )}
             </g>
           );
         })}
 
         {/* ── Agent nodes (middle layer) ── */}
         {agents.map((a, idx) => {
-          const isH = hovered === a.id;
+          const isH = focus === a.id;
+          const isPinned = pinnedAgent === a.id;
           const lit = isLit(a.id);
           const r = isH ? 18 : 15;
           return (
@@ -304,64 +394,48 @@ function NetworkGraph({ onSupplierClick, onVesselClick }: { onSupplierClick?: (s
               style={{ cursor: 'pointer' }}
               onMouseEnter={() => setHovered(a.id)}
               onMouseLeave={() => setHovered(null)}
+              onClick={() => {
+                /* Toggle the agent's info panel — first click pins, second
+                 * click on the SAME agent unpins. Clicking a different
+                 * agent simply moves the pin. */
+                setPinnedAgent((prev) => (prev === a.id ? null : a.id));
+              }}
             >
               {/* Outer pulse — always on, marks "live" agents */}
               <circle cx={`${a.x}%`} cy={`${a.y}%`} r={r + 5} fill="none" stroke={a.color} strokeWidth="0.8" opacity="0.3">
                 <animate attributeName="r" values={`${r + 5};${r + 11};${r + 5}`} dur="3.5s" begin={`${idx * 0.5}s`} repeatCount="indefinite"/>
                 <animate attributeName="opacity" values="0.35;0;0.35" dur="3.5s" begin={`${idx * 0.5}s`} repeatCount="indefinite"/>
               </circle>
-              {/* Halo */}
-              <circle cx={`${a.x}%`} cy={`${a.y}%`} r={r + 7} fill={a.color} opacity={isH ? 0.18 : lit ? 0.12 : 0.06} style={{ transition: 'all 200ms' }} />
-              {/* ── Cute robot avatar ── */}
-              {/* Antenna stalk */}
-              <line
-                x1={`${a.x}%`} y1={`${a.y - 3.2}%`}
-                x2={`${a.x}%`} y2={`${a.y - 4.3}%`}
-                stroke={a.color} strokeWidth={1.2} strokeLinecap="round" opacity={isH ? 1 : 0.85}
+              {/* Pin ring — visible when the agent's panel is locked open. */}
+              {isPinned && (
+                <circle cx={`${a.x}%`} cy={`${a.y}%`} r={r + 3} fill="none" stroke={a.color} strokeWidth="1.4" opacity="0.95" />
+              )}
+              {/* ── Agent avatar ──
+                  Investigator → Exa logo (its third-party brain),
+                  every other agent → the BunkerGuard Kiro mascot. */}
+              <KiroGhostNode
+                cx={a.x} cy={a.y}
+                size={7}
+                color={a.color}
+                hovered={isH}
+                lit={lit}
+                idx={idx}
+                src={a.key === 'investigator' ? AGENT_AVATAR_SRC.exa : AGENT_AVATAR_SRC.kiro}
               />
-              {/* Antenna bulb */}
-              <circle cx={`${a.x}%`} cy={`${a.y - 4.5}%`} r={isH ? 1.1 : 0.9} fill={a.color}>
-                <animate attributeName="opacity" values="1;0.35;1" dur="1.6s" begin={`${idx * 0.3}s`} repeatCount="indefinite"/>
-              </circle>
-              {/* Robot head (rounded square with chamfered look) */}
-              <rect
-                x={`${a.x - 3.2}%`} y={`${a.y - 3}%`} width="6.4%" height="5.8%"
-                rx="14" ry="14"
-                fill={`${a.color}${isH ? '38' : '22'}`}
-                stroke={a.color}
-                strokeWidth={isH ? 2 : 1.5}
-                style={{ transition: 'all 200ms' }}
-              />
-              {/* Cheek blush */}
-              <circle cx={`${a.x - 2.1}%`} cy={`${a.y + 0.4}%`} r="0.5" fill={a.color} opacity="0.45"/>
-              <circle cx={`${a.x + 2.1}%`} cy={`${a.y + 0.4}%`} r="0.5" fill={a.color} opacity="0.45"/>
-              {/* Eyes — glowing, with blink */}
-              <circle cx={`${a.x - 1.2}%`} cy={`${a.y - 0.6}%`} r="0.75" fill="#EAF6FF">
-                <animate attributeName="ry" values="0.75;0.08;0.75" keyTimes="0;0.06;0.12" dur="4s" begin={`${idx * 0.4 + 1.2}s`} repeatCount="indefinite"/>
-              </circle>
-              <circle cx={`${a.x + 1.2}%`} cy={`${a.y - 0.6}%`} r="0.75" fill="#EAF6FF">
-                <animate attributeName="ry" values="0.75;0.08;0.75" keyTimes="0;0.06;0.12" dur="4s" begin={`${idx * 0.4 + 1.2}s`} repeatCount="indefinite"/>
-              </circle>
-              {/* Eye pupils */}
-              <circle cx={`${a.x - 1.2}%`} cy={`${a.y - 0.6}%`} r="0.35" fill={a.color}/>
-              <circle cx={`${a.x + 1.2}%`} cy={`${a.y - 0.6}%`} r="0.35" fill={a.color}/>
-              {/* Smile */}
-              <path
-                d={`M ${a.x - 0.9} ${a.y + 1.1} Q ${a.x} ${a.y + 1.9} ${a.x + 0.9} ${a.y + 1.1}`}
-                transform="translate(0,0)"
-                fill="none" stroke={a.color} strokeWidth="0.6" strokeLinecap="round"
-                vectorEffect="non-scaling-stroke"
-                style={{ pointerEvents: 'none' }}
-              />
-              {/* Tiny status dot under chin */}
-              <circle cx={`${a.x}%`} cy={`${a.y + 2.6}%`} r="0.4" fill={a.color} opacity={lit ? 1 : 0.4}>
-                {lit && <animate attributeName="opacity" values="1;0.3;1" dur="1.2s" repeatCount="indefinite"/>}
-              </circle>
               {/* Agent name */}
               <text x={`${a.x}%`} y={`${a.y + 5.5}%`} textAnchor="middle"
                 style={{ fontSize: '10px', fontWeight: 700, fill: isH ? '#EAF4FF' : '#BFD7F7', fontFamily: 'sans-serif', pointerEvents: 'none', transition: 'fill 200ms', letterSpacing: '0.04em' }}>
                 {a.name}
               </text>
+              {/* "click to pin / click to close" hint — only when hovered
+                  and not yet pinned, so it doesn't add visual noise once
+                  the user has done it once. */}
+              {isH && !isPinned && (
+                <text x={`${a.x}%`} y={`${a.y + 8}%`} textAnchor="middle"
+                  style={{ fontSize: '7.5px', fontWeight: 700, fill: a.color, fontFamily: 'sans-serif', pointerEvents: 'none', letterSpacing: '0.18em' }}>
+                  CLICK TO PIN
+                </text>
+              )}
             </g>
           );
         })}
@@ -372,18 +446,49 @@ function NetworkGraph({ onSupplierClick, onVesselClick }: { onSupplierClick?: (s
         <text x="88%" y="96%" textAnchor="middle" style={{ fontSize: '9px', fill: '#4E7A9A', fontFamily: 'sans-serif', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>Fleet Sessions</text>
       </svg>
 
-      {/* Hover tooltip */}
-      {hovered && (() => {
-        const supplier = suppliers.find(s => s.id === hovered);
-        const vessel = vessels.find(v => v.id === hovered);
-        const agent = agents.find(a => a.id === hovered);
+      {/* Info panel — pinned agent wins over hover so the operator can move
+          the cursor freely once they've clicked. Position is anchored
+          NEAR the focused node so the centre-top of the chart (which used
+          to overlap the vessel column) is now clear. */}
+      {focus && (() => {
+        const supplier = suppliers.find(s => s.id === focus);
+        const vessel = vessels.find(v => v.id === focus);
+        const agent = agents.find(a => a.id === focus);
         if (!supplier && !vessel && !agent) return null;
+
+        /* Position rules (chart container is the % reference):
+         *   - Supplier (x≈8%)  → tooltip to its RIGHT, just inside the
+         *                        agent column. Vessels stay visible.
+         *   - Agent    (x≈46%) → tooltip BELOW the agent. Centre column,
+         *                        never bleeds into supplier or vessel
+         *                        cards.
+         *   - Vessel   (x≈88%) → tooltip to its LEFT so the card itself
+         *                        stays uncovered and clickable. */
+        let leftPct: number, topPct: number, transform: string;
+        if (supplier) {
+          leftPct = supplier.x + 8; topPct = supplier.y - 2;
+          transform = 'translate(0, -50%)';
+        } else if (agent) {
+          leftPct = agent.x; topPct = agent.y + 12;
+          transform = 'translate(-50%, 0)';
+        } else if (vessel) {
+          leftPct = vessel.x - 8; topPct = vessel.y;
+          transform = 'translate(-100%, -50%)';
+        } else {
+          leftPct = 50; topPct = 4;
+          transform = 'translate(-50%, 0)';
+        }
+        const isPinned = !!pinnedAgent && pinnedAgent === focus;
 
         return (
           <div style={{
-            position: 'absolute', top: 14, left: '50%', transform: 'translateX(-50%)', width: 220, padding: '12px 14px', borderRadius: 9,
-            background: 'rgba(6,14,28,0.98)', border: '1px solid rgba(46,100,168,0.25)', boxShadow: '0 6px 20px rgba(0,0,0,0.7)',
-            pointerEvents: 'none',
+            position: 'absolute', top: `${topPct}%`, left: `${leftPct}%`, transform,
+            width: 220, padding: '12px 14px', borderRadius: 9,
+            background: 'rgba(6,14,28,0.98)',
+            border: `1px solid ${isPinned ? 'rgba(46,168,255,0.55)' : 'rgba(46,100,168,0.25)'}`,
+            boxShadow: isPinned ? '0 6px 20px rgba(46,168,255,0.25), 0 0 0 1px rgba(46,168,255,0.35)' : '0 6px 20px rgba(0,0,0,0.7)',
+            pointerEvents: isPinned ? 'auto' : 'none',
+            zIndex: 5,
           }}>
             {supplier && (
               <>
@@ -405,7 +510,20 @@ function NetworkGraph({ onSupplierClick, onVesselClick }: { onSupplierClick?: (s
             )}
             {agent && (
               <>
-                <div style={{ fontSize: 9, color: agent.color, textTransform: 'uppercase', letterSpacing: '0.14em', fontWeight: 700, marginBottom: 4 }}>AI AGENT · {agent.glyph}</div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <div style={{ fontSize: 9, color: agent.color, textTransform: 'uppercase', letterSpacing: '0.14em', fontWeight: 700 }}>AI AGENT · {agent.glyph}</div>
+                  {isPinned && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setPinnedAgent(null); }}
+                      title="Close (or click the same agent again)"
+                      style={{
+                        background: 'transparent', border: '1px solid rgba(255,255,255,0.15)',
+                        color: '#7FA5D3', borderRadius: 3,
+                        width: 18, height: 18, lineHeight: '14px',
+                        fontSize: 13, cursor: 'pointer', padding: 0,
+                      }}>×</button>
+                  )}
+                </div>
                 <div style={{ fontSize: 13, fontWeight: 700, color: '#EAF4FF', marginBottom: 6 }}>{agent.name}</div>
                 <div style={{ fontSize: 10, color: '#BFD7F7', lineHeight: 1.4, marginBottom: 8 }}>{agent.desc}</div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -476,15 +594,6 @@ function NetworkGraph({ onSupplierClick, onVesselClick }: { onSupplierClick?: (s
         <span style={{ fontSize: 9, fontWeight: 700, color: '#A36CFF', textTransform: 'uppercase', letterSpacing: '0.12em' }}>Copilot · explains</span>
       </div>
 
-      {/* AI Insight Overlays */}
-      <div style={{ position: 'absolute', top: 12, right: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{ padding: '5px 12px', borderRadius: 7, background: 'rgba(217,100,100,0.12)', border: '1px solid rgba(217,100,100,0.28)', boxShadow: '0 4px 12px rgba(217,100,100,0.2)' }}>
-          <div style={{ fontSize: 9, fontWeight: 700, color: '#E84E4E', textTransform: 'uppercase', letterSpacing: '0.10em' }}>High Confidence Correlation</div>
-        </div>
-        <div style={{ padding: '5px 12px', borderRadius: 7, background: 'rgba(255,184,77,0.11)', border: '1px solid rgba(255,184,77,0.25)' }}>
-          <div style={{ fontSize: 8, fontWeight: 600, color: '#E0A020', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Supplier Risk Escalation</div>
-        </div>
-      </div>
     </div>
   );
 }
@@ -856,7 +965,6 @@ export function IntelligencePage() {
   const [profilePanelOpen, setProfilePanelOpen] = useState(false);
   const [selectedSupplierKey, setSelectedSupplierKey] = useState<string | null>(null);
   const navigate = useNavigate();
-  const carbon = useCarbonExposure();
 
   const handleInvestigate = (key: string | null) => {
     setSelectedSupplier(key);
@@ -870,7 +978,7 @@ export function IntelligencePage() {
   const estimatedExposure = 18620;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden', position: 'relative' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, position: 'relative' }}>
 
       {/* Header + tabs */}
       <div style={{ padding: '28px 32px 0', flexShrink: 0, borderBottom: '1px solid rgba(255,255,255,0.08)', background: 'rgba(4,10,20,0.7)' }}>
@@ -903,8 +1011,9 @@ export function IntelligencePage() {
         </div>
       </div>
 
-      {/* Tab content */}
-      <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+      {/* Tab content — no inner overflowY any more; lets <main> handle
+          one consistent scroll-axis across the app. */}
+      <div style={{ flex: 1, minHeight: 0 }}>
       <div style={{ padding: '28px 32px', display: 'flex', flexDirection: 'column', gap: 24 }}>
 
         {/* ══ TAB 1: SUPPLIER INTELLIGENCE ══════════════════════════════ */}
@@ -944,38 +1053,73 @@ export function IntelligencePage() {
                   ))}
                 </div>
               </div>
-              {/* Network + AI Insights overlay wrapper */}
-              <div style={{ position: 'relative' }}>
-                <NetworkGraph onSupplierClick={(name) => setSelectedSupplier(name)} onVesselClick={(session) => console.log('Navigate', session)} />
-                {/* AI Generated Insights floating panel */}
+              {/* Network graph */}
+              <NetworkGraph
+                onSupplierClick={(name) => setSelectedSupplier(name)}
+                /* Vessel session click → open the session in the
+                 * Sessions detail page. Session numbers are stored as
+                 * plain ints in the chart data (e.g. 16) but Supabase
+                 * IDs are zero-padded "SES-2026-016", so we format
+                 * here before navigating. */
+                onVesselClick={(session) =>
+                  navigate(`/sessions/SES-2026-${String(session).padStart(3, '0')}`)
+                }
+              />
+
+              {/* AI Generated Insights — lives BELOW the chart now (used
+               *  to be absolutely-positioned over the top-right of the
+               *  network and was blocking the vessel column). Rendered as
+               *  a horizontal banner so it doesn't add much vertical
+               *  height. Click the affected-session chips → navigate to
+               *  that session's detail view. */}
+              <div style={{
+                marginTop: 12,
+                background: 'rgba(6,14,28,0.92)',
+                border: '1px solid rgba(74,158,255,0.22)',
+                borderRadius: 10,
+                padding: '12px 16px',
+                display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap',
+                boxShadow: '0 4px 14px rgba(0,0,0,0.35)',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                  <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#3AABFF', animation: 'livePulse 2s ease-in-out infinite' }} />
+                  <span style={{ fontSize: 9, fontWeight: 800, color: '#3AABFF', textTransform: 'uppercase', letterSpacing: '0.14em' }}>
+                    AI Generated Insights
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: '#EAF4FF', flex: 1, minWidth: 240 }}>
+                  Recurring shortage behaviour detected across 3 MegaFuel deliveries
+                </div>
+                <InsightStat label="Confidence"   value="94%"     color="#3AABFF" />
+                <InsightStat label="Est. Exposure" value="$17,620" color="#E84E4E" />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 9, color: '#5A8AB4', textTransform: 'uppercase', letterSpacing: '0.10em', fontWeight: 700 }}>Affected</span>
+                  {[16, 19, 20].map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => navigate(`/sessions/SES-2026-${String(s).padStart(3, '0')}`)}
+                      style={{
+                        padding: '3px 8px', borderRadius: 4,
+                        fontSize: 11, fontWeight: 800,
+                        fontFamily: "'JetBrains Mono', monospace",
+                        background: 'rgba(232,78,78,0.10)',
+                        border: '1px solid rgba(232,78,78,0.35)',
+                        color: '#E84E4E', cursor: 'pointer',
+                        transition: 'all 140ms',
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(232,78,78,0.20)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(232,78,78,0.10)'; }}
+                    >#{s}</button>
+                  ))}
+                </div>
                 <div style={{
-                  position: 'absolute', top: 14, right: 14, width: 220,
-                  background: 'rgba(6,14,28,0.92)', backdropFilter: 'blur(12px)',
-                  border: '1px solid rgba(74,158,255,0.22)', borderRadius: 10,
-                  padding: '13px 15px', boxShadow: '0 8px 28px rgba(0,0,0,0.6)',
+                  padding: '4px 10px', borderRadius: 4,
+                  background: 'rgba(232,78,78,0.08)',
+                  border: '1px solid rgba(232,78,78,0.30)',
+                  fontSize: 11, color: '#FFA8A8', fontWeight: 600,
                 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
-                    <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#3AABFF', animation: 'livePulse 2s ease-in-out infinite' }} />
-                    <span style={{ fontSize: 8, fontWeight: 700, color: '#3AABFF', textTransform: 'uppercase', letterSpacing: '0.12em' }}>AI Generated Insights</span>
-                  </div>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: '#EAF4FF', lineHeight: 1.5, marginBottom: 10 }}>
-                    Recurring shortage behaviour detected across 3 MegaFuel deliveries
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    {[
-                      { k: 'Confidence', v: '94%', c: '#3AABFF' },
-                      { k: 'Est. Exposure', v: '$17,620', c: '#E84E4E' },
-                      { k: 'Affected', v: '#16 #19 #20', c: '#BFD7F7' },
-                    ].map(r => (
-                      <div key={r.k} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10 }}>
-                        <span style={{ color: '#5A8AB4' }}>{r.k}</span>
-                        <span style={{ fontWeight: 700, color: r.c, fontFamily: "'JetBrains Mono', monospace" }}>{r.v}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.07)', fontSize: 10, color: '#7FA5D3', lineHeight: 1.4 }}>
-                    <span style={{ color: '#E84E4E', fontWeight: 700 }}>Action: </span>Independent survey required
-                  </div>
+                  <span style={{ color: '#E84E4E', fontWeight: 800 }}>Action: </span>
+                  Independent survey required
                 </div>
               </div>
             </div>
@@ -1125,92 +1269,6 @@ export function IntelligencePage() {
                   <div style={{ fontSize: 9, color: '#5A8AB4' }}>{kpi.sub}</div>
                 </div>
               ))}
-            </div>
-
-            {/* Carbon Exposure Analysis — supplementary to fraud intelligence */}
-            <div style={{ ...CARD, padding: '18px 20px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, marginBottom: 14 }}>
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: '#EAF4FF' }}>Carbon Exposure Analysis</div>
-                  <div style={{ fontSize: 10, color: '#5A8AB4', marginTop: 3 }}>
-                    Supplementary environmental intelligence. Fraud risk remains the primary decision signal.
-                  </div>
-                </div>
-                <span style={{ fontSize: 9, fontWeight: 700, color: carbon.carbonRiskLevel === 'HIGH' || carbon.carbonRiskLevel === 'CRITICAL' ? '#E0A020' : '#34C98C', letterSpacing: '0.08em' }}>
-                  {carbon.loading ? 'CALCULATING' : `${carbon.carbonRiskLevel} CARBON RISK`}
-                </span>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 16 }}>
-                {[
-                  { label: 'Total Fleet Carbon', value: `${carbon.totalTco2e.toLocaleString(undefined, { maximumFractionDigits: 1 })} tCO2e` },
-                  { label: 'Average / Session', value: `${carbon.averagePerSession.toLocaleString(undefined, { maximumFractionDigits: 1 })} tCO2e` },
-                  { label: 'Highest Carbon Supplier', value: carbon.suppliers[0]?.supplier ?? '—' },
-                  { label: 'Carbon Risk Indicator', value: carbon.carbonRiskLevel },
-                ].map((item) => (
-                  <div key={item.label} style={{ padding: '11px 13px', borderRadius: 7, background: 'rgba(74,158,255,0.045)', border: '1px solid rgba(74,158,255,0.12)' }}>
-                    <div style={LABEL}>{item.label}</div>
-                    <div style={{ fontSize: item.label === 'Highest Carbon Supplier' ? 12 : 16, fontWeight: 800, color: '#BFD7F7', fontFamily: "'JetBrains Mono', monospace" }}>{item.value}</div>
-                  </div>
-                ))}
-              </div>
-
-              <div style={{ overflowX: 'auto', marginBottom: 16 }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
-                  <thead>
-                    <tr style={{ color: '#5A8AB4', textAlign: 'left', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                      {['Supplier', 'Fuel', 'Total Fuel MT', 'Carbon tCO2e', 'Financial Exposure', 'Risk Score', 'Flagged', 'Carbon Risk'].map((heading) => (
-                        <th key={heading} style={{ padding: '7px 8px', fontWeight: 700 }}>{heading}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {carbon.suppliers.map((supplier) => (
-                      <tr key={supplier.supplier} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', color: '#BFD7F7' }}>
-                        <td style={{ padding: '8px', fontWeight: 700 }}>{supplier.supplier}</td>
-                        <td style={{ padding: '8px' }}>{supplier.fuel}</td>
-                        <td style={{ padding: '8px' }}>{supplier.totalFuelMt.toFixed(1)}</td>
-                        <td style={{ padding: '8px', color: '#3AABFF', fontWeight: 700 }}>{supplier.carbonTco2e.toFixed(1)}</td>
-                        <td style={{ padding: '8px' }}>${supplier.financialExposure.toLocaleString()}</td>
-                        <td style={{ padding: '8px' }}>{supplier.riskScore.toFixed(0)}</td>
-                        <td style={{ padding: '8px' }}>{supplier.flaggedSessions}</td>
-                        <td style={{ padding: '8px', fontWeight: 700 }}>{supplier.carbonRiskLevel}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 18 }}>
-                <div style={{ padding: 12, borderRadius: 7, background: 'rgba(255,255,255,0.025)' }}>
-                  <div style={LABEL}>Carbon Breakdown</div>
-                  <div style={{ fontSize: 20, fontWeight: 800, color: '#3AABFF' }}>{carbon.totalTco2e.toFixed(1)} tCO2e</div>
-                  <div style={{ fontSize: 9, color: '#7FA5D3', marginTop: 7 }}>
-                    Monitoring threshold: 5,000 tCO2e · {carbon.totalTco2e >= 5000 ? 'threshold reached' : 'below threshold'}
-                  </div>
-                </div>
-                <div>
-                  <div style={LABEL}>Supplier Contribution & Exposure Trend</div>
-                  {carbon.suppliers.map((supplier) => (
-                    <div key={supplier.supplier} style={{ display: 'grid', gridTemplateColumns: '160px 1fr 48px', gap: 8, alignItems: 'center', marginBottom: 7 }}>
-                      <span style={{ fontSize: 9, color: '#BFD7F7', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{supplier.supplier}</span>
-                      <div style={{ height: 5, background: 'rgba(255,255,255,0.06)', borderRadius: 3 }}>
-                        <div style={{ width: `${supplier.contributionPercent}%`, height: '100%', borderRadius: 3, background: '#3AABFF' }} />
-                      </div>
-                      <span style={{ fontSize: 9, color: '#7FA5D3', textAlign: 'right' }}>{supplier.contributionPercent}%</span>
-                    </div>
-                  ))}
-                  <div style={{ fontSize: 9, color: '#5A8AB4', marginTop: 8 }}>
-                    Trend uses dated session deliveries when available.
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.06)', fontSize: 9.5, color: '#7FA5D3' }}>
-                Carbon exposure is calculated from delivered fuel quantity × fuel-grade emission factor.
-                {carbon.estimatedFromAvailableData && <span style={{ color: '#E0A020' }}> Estimated from available session data.</span>}
-                {carbon.error && <span style={{ color: '#E84E4E' }}> {carbon.error}</span>}
-              </div>
             </div>
 
             {/* 2-col: Affected Fleet + Cascading Impact */}

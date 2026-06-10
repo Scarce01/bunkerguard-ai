@@ -163,7 +163,7 @@ export function SessionDetailPage() {
       {activeTab === 'overview' && (
         <div className="space-y-6">
           {/* Quick Stats */}
-          <div className="grid grid-cols-5 gap-6">
+          <div className="grid grid-cols-4 gap-6">
             <SectionPanel>
               <div className="text-xs text-foreground-muted mb-2">BDN Quantity</div>
               <div className="text-2xl font-bold text-foreground mb-1">{session.bdnQuantity.toFixed(1)}</div>
@@ -184,16 +184,9 @@ export function SessionDetailPage() {
               <div className="text-2xl font-bold text-critical mb-1">{session.riskScore.total}/100</div>
               <StatusPill status={session.riskScore.level} size="sm" />
             </SectionPanel>
-            <SectionPanel>
-              <div className="text-xs text-foreground-muted mb-2">Estimated CO2e</div>
-              <div className="text-2xl font-bold text-foreground mb-1">
-                {session.carbonExposure.estimatedTco2e.toLocaleString(undefined, { maximumFractionDigits: 1 })}
-              </div>
-              <div className="text-xs text-foreground-secondary">tCO2e · {session.carbonExposure.carbonRiskLevel}</div>
-            </SectionPanel>
           </div>
 
-          <div className="grid grid-cols-4 gap-6">
+          <div className="grid grid-cols-3 gap-6">
             {/* Session Info */}
             <SectionPanel title="Session Information">
               <div className="space-y-3">
@@ -257,28 +250,6 @@ export function SessionDetailPage() {
                     </div>
                   </div>
                 ))}
-              </div>
-            </SectionPanel>
-
-            <SectionPanel title="Carbon Exposure">
-              <div className="space-y-3">
-                {[
-                  { label: 'Quantity MT', value: session.carbonExposure.quantityMt.toFixed(1) },
-                  { label: 'Fuel Grade', value: session.carbonExposure.fuelGrade },
-                  { label: 'Emission Factor', value: `${session.carbonExposure.emissionFactor.toFixed(3)} tCO2e/MT` },
-                  { label: 'Estimated CO2e', value: `${session.carbonExposure.estimatedTco2e.toFixed(1)} tCO2e` },
-                ].map((item) => (
-                  <div key={item.label} className="flex justify-between gap-3 text-xs">
-                    <span className="text-foreground-muted">{item.label}</span>
-                    <span className="text-foreground font-semibold text-right">{item.value}</span>
-                  </div>
-                ))}
-                <div className="pt-3 border-t border-border text-xs text-foreground-muted leading-relaxed">
-                  Carbon exposure is calculated from delivered fuel quantity × fuel-grade emission factor.
-                  {session.carbonExposure.estimatedFromAvailableData && (
-                    <div className="mt-1 text-warning">Estimated from available session data.</div>
-                  )}
-                </div>
               </div>
             </SectionPanel>
           </div>

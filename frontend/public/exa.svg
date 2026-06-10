@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" shape-rendering="geometricPrecision">
+  <!-- Blue square background — matches the Exa brand -->
+  <rect x="0" y="0" width="96" height="96" rx="14" ry="14" fill="#1A56FF"/>
+
+  <!-- The geometric Exa "stargate" mark — two stacked triangles linked
+       by a vertical axis, in white. Reproduced from the reference image. -->
+  <g fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linejoin="miter" stroke-linecap="square">
+    <!-- Outer square frame -->
+    <rect x="18" y="18" width="60" height="60"/>
+    <!-- Top-left → centre → bottom-right diagonal -->
+    <path d="M 18 18 L 48 48 L 18 78"/>
+    <!-- Top-right → centre → bottom-left diagonal -->
+    <path d="M 78 18 L 48 48 L 78 78"/>
+    <!-- Vertical centre line connecting the two triangle apices -->
+    <line x1="48" y1="18" x2="48" y2="78"/>
+  </g>
+</svg>

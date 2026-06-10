@@ -501,7 +501,7 @@ export function EvidenceCenterPage() {
   ];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
 
       {/* Header */}
       <div style={{ padding: '18px 32px 0', flexShrink: 0, borderBottom: '1px solid rgba(255,255,255,0.08)', background: 'rgba(4,10,20,0.7)' }}>
@@ -611,8 +611,8 @@ export function EvidenceCenterPage() {
         </div>
       </div>
 
-      {/* Tab Content */}
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px 32px' }}>
+      {/* Tab Content — page-level scroll handled by <main> in AppLayout. */}
+      <div style={{ flex: 1, minHeight: 0, padding: '20px 32px' }}>
         {activeTab === 'investigation' && <InvestigationTab caseData={selectedCase} />}
         {activeTab === 'evidence' && <EvidenceTab caseData={selectedCase} />}
         {activeTab === 'protest' && <ProtestTab caseData={selectedCase} />}

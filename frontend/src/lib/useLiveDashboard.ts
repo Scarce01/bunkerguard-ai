@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase, AnomalyRow, SupplierRow, SessionRow } from './supabase';
+import { useNowClock } from './useNowClock';
+import { relativeTimeFrom } from './sessionDerive';
 
 /**
  * Pulls the data the Dashboard's Critical Events and Supplier Watchlist
@@ -41,15 +43,8 @@ interface DashboardData {
   error: string | null;
 }
 
-function relativeTime(iso: string | null): string {
-  if (!iso) return '—';
-  const ms = Date.now() - new Date(iso).getTime();
-  if (ms < 0)        return 'in future';
-  if (ms < 60_000)   return `${Math.round(ms / 1000)}s`;
-  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`;
-  if (ms < 86_400_000) return `${Math.round(ms / 3_600_000)}h`;
-  return `${Math.round(ms / 86_400_000)}d`;
-}
+// `relativeTime` now lives in sessionDerive.ts so every page formats
+// elapsed-time strings against the same shared `now`.
 
 function severityColor(sev: string): string {
   switch (sev) {
@@ -77,6 +72,10 @@ export function useLiveDashboard(terminalPortNames?: string[]): DashboardData {
 
   // Stringify so the effect doesn't refire on identical array references
   const portsKey = (terminalPortNames ?? []).join('|');
+  // Shared clock — refetchTick advances every 5 s in lock-step across pages,
+  // so the Dashboard's KPI strip pulls a fresh count at the same instant the
+  // Sessions and Live Session pages reload their data.
+  const { now, refetchTick } = useNowClock();
 
   useEffect(() => {
     let cancelled = false;
@@ -116,7 +115,7 @@ export function useLiveDashboard(terminalPortNames?: string[]): DashboardData {
             severity: sev as CriticalEvent['severity'],
             label: a.rule_name || a.rule || 'Anomaly detected',
             detail: `${a.session_id ?? ''} · ${sess?.vessel_name ?? 'Unknown vessel'}`,
-            time: relativeTime(a.triggered_at),
+            time: relativeTimeFrom(a.triggered_at, now),
             color: severityColor(sev),
           };
         });
@@ -178,7 +177,11 @@ export function useLiveDashboard(terminalPortNames?: string[]): DashboardData {
 
     load();
     return () => { cancelled = true; };
-  }, [portsKey]);
+    // refetchTick re-runs the fetch every 5 s in lock-step with the other
+    // hooks. `now` is intentionally NOT a dep — we don't want a fetch every
+    // 1 s; we want labels (relative time) to re-render on every wall tick.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [portsKey, refetchTick]);
 
   return { events, suppliers, kpis, loading, error };
 }

@@ -8,6 +8,7 @@ import { Search, X, ArrowRight, ExternalLink, FileText, Filter, ChevronDown, Upl
 import { BDNDetailsDrawer } from '../components/details/BDNDetailsDrawer';
 import { MFMTelemetryPanel } from '../components/details/MFMTelemetryPanel';
 import { BDNUploadDrawer } from '../components/upload/BDNUploadDrawer';
+import { useNow } from '../../lib/useNowClock';
 
 const CARD: React.CSSProperties = {
   background: 'linear-gradient(180deg, #102033 0%, #0E1C2D 100%)',
@@ -36,6 +37,9 @@ export function SessionsPage() {
   const [bdnDrawerOpen, setBdnDrawerOpen] = useState(false);
   const [uploadDrawerOpen, setUploadDrawerOpen] = useState(false);
 
+  // Shared NowClock — drives the "last updated" footer in lock-step with
+  // the Dashboard pin and Live Session telemetry.
+  const nowMs = useNow();
   // Live data from Supabase, with mock data as the loading fallback.
   const live = useSessionsList();
   const mockSessions = live.loading || live.sessions.length === 0
@@ -83,10 +87,12 @@ export function SessionsPage() {
   const activeFiltersCount = [supplierFilter, vesselFilter, portFilter, fuelGradeFilter, verdictFilter].filter(f => f !== 'ALL').length;
 
   return (
-    <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+    <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
 
-      {/* ── Main content ── */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '24px 28px' }}>
+      {/* ── Main content — flows naturally inside <main>'s overflow-y:auto.
+            No overflow:hidden here, otherwise table content gets clipped on
+            small laptops (the parent already handles page-level scroll). ── */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '24px 28px', minWidth: 0 }}>
 
         {/* Header */}
         <div style={{ marginBottom: 20, marginTop: 4, flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
@@ -193,9 +199,12 @@ export function SessionsPage() {
           </div>
         )}
 
-        {/* Table */}
-        <div style={{ ...CARD, flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ overflowY: 'auto', flex: 1 }}>
+        {/* Table — natural flow (not flex:1 ↔ overflow:hidden any more)
+            so on a 13" laptop the whole table can grow and the page-level
+            scroll just keeps going. Inner overflow-x lets wide tables
+            scroll horizontally without forcing a fixed table height. */}
+        <div style={{ ...CARD, display: 'flex', flexDirection: 'column', overflowX: 'auto' }}>
+          <div>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                 <tr style={{ background: 'rgba(4,10,22,0.97)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
@@ -233,7 +242,26 @@ export function SessionsPage() {
                       <td style={{ padding: '13px 18px', fontSize: 11, color: '#91B4DA' }}>{session.location}</td>
                       <td style={{ padding: '13px 18px', fontSize: 11, color: '#91B4DA', fontFamily: "'JetBrains Mono', monospace" }}>{session.fuelGrade}</td>
                       <td style={{ padding: '13px 18px', fontSize: 12, fontWeight: 600, color: '#BFD7F7', fontFamily: "'JetBrains Mono', monospace" }}>{session.bdnQuantity.toFixed(1)} MT</td>
-                      <td style={{ padding: '13px 18px', fontSize: 12, fontWeight: 600, color: '#BFD7F7', fontFamily: "'JetBrains Mono', monospace" }}>{session.mfmQuantity.toFixed(1)} MT</td>
+                      <td style={{ padding: '13px 18px', fontFamily: "'JetBrains Mono', monospace" }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: '#BFD7F7' }}>{session.mfmQuantity.toFixed(1)} MT</div>
+                        {/* Shared-clock progress bar — same % shown on the
+                            Dashboard delivery-pin tooltip and the Live
+                            Session "TRANSFER" KPI at this same instant. */}
+                        {typeof (session as any).progressPct === 'number' && (
+                          <div style={{ marginTop: 4, width: 86 }} title={`${(session as any).progressPct}% transferred`}>
+                            <div style={{ height: 3, background: 'rgba(255,255,255,0.07)', borderRadius: 2, overflow: 'hidden' }}>
+                              <div style={{
+                                width: `${(session as any).progressPct}%`, height: '100%',
+                                background: '#4A9EFF',
+                                transition: 'width 800ms ease-out',
+                              }} />
+                            </div>
+                            <div style={{ fontSize: 8, color: '#5A8AB4', marginTop: 2, letterSpacing: 0.6 }}>
+                              {(session as any).progressPct}% · live
+                            </div>
+                          </div>
+                        )}
+                      </td>
                       <td style={{ padding: '13px 18px' }}>
                         <span style={{ fontSize: 12, fontWeight: 700, color: session.mismatchPercent > 1 ? '#FF5A5A' : '#00D47E', fontFamily: "'JetBrains Mono', monospace" }}>
                           {session.mismatchPercent.toFixed(2)}%
@@ -255,7 +283,7 @@ export function SessionsPage() {
           {/* Footer */}
           <div style={{ padding: '12px 18px', borderTop: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
             <span style={{ fontSize: 11, color: '#7FA5D3' }}>Showing {filteredSessions.length} of {mockSessions.length} sessions</span>
-            <span style={{ fontSize: 11, color: '#7FA5D3' }}>Last updated: {new Date().toLocaleTimeString()}</span>
+            <span style={{ fontSize: 11, color: '#7FA5D3' }}>Last updated: {new Date(nowMs).toLocaleTimeString()} · synced clock</span>
           </div>
         </div>
       </div>

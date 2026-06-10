@@ -13,9 +13,13 @@
 import { useMemo, useState } from 'react';
 import { Anchor, Brain, ShieldCheck, Gavel, UserCheck, Check, X, CheckCircle2, FileText } from 'lucide-react';
 import { supabase, SessionRow, RiskScoreRow, AnomalyRow } from '../../../lib/supabase';
+import { KiroGhostBadge, AGENT_AVATAR_SRC } from '../ai/KiroGhost';
+import { useEnrichEntities } from '../../../lib/useEnrichEntities';
+import { useAgentOutput } from '../../../lib/useAgentOutput';
 import { MfmPacket, LlmOutputRow } from '../../../lib/useLiveSession';
 import { GeofenceRow } from '../../../lib/useGeofence';
 import { EvidenceReportDrawer } from '../evidence/EvidenceReportDrawer';
+import { saveReportPdf } from '../../../lib/useGeneratedReports';
 
 interface Props {
   session: SessionRow;
@@ -56,11 +60,64 @@ const AGENTS: AgentDef[] = [
 export function AgentWorkflow({ session, risk, anomalies, mfm, llm, geofence, outsideGeofence, onSessionUpdated }: Props) {
   const score = risk?.final_risk_score ?? 0;
   const [signOff, setSignOff] = useState<'pending' | 'approved' | 'overridden' | 'saving'>(
-    session.status === 'APPROVED'   ? 'approved'   :
-    session.status === 'OVERRIDDEN' ? 'overridden' : 'pending',
+    session.sign_off_status === 'APPROVED'   ? 'approved'   :
+    session.sign_off_status === 'OVERRIDDEN' ? 'overridden' : 'pending',
   );
   const [signOffError, setSignOffError] = useState<string | null>(null);
   const [reportDrawerOpen, setReportDrawerOpen] = useState(false);
+
+  /* Investigator agent — LIVE backend enrichment via Exa.
+   * Calls `enrichment.enrich_entities` through the /api/enrich Vite proxy.
+   * Only fires when risk ≥ INVESTIGATOR threshold to conserve Exa quota. */
+  const investigatorActive = score >= TH.INVESTIGATOR;
+  const { intel: enrichIntel, loading: enrichLoading, error: enrichError } = useEnrichEntities(
+    session,
+    investigatorActive,
+  );
+
+  /* Compliance agent — LIVE LLM-drafted evidence + regulatory summary.
+   * Fires only above the COMPLIANCE threshold so we don't pay for token
+   * spend on low-risk sessions. */
+  const complianceActive = score > TH.COMPLIANCE;
+  const complianceCtx = complianceActive ? {
+    session_id: session.session_id,
+    risk_score: risk?.final_risk_score,
+    risk_category: risk?.risk_category,
+    anomalies: anomalies.map(a => a.rule),
+    evidence_sha256: session.evidence_sha256,
+    blockchain_tx: session.blockchain_tx,
+    sanctions_check: enrichIntel?.supplier.sanctions_check,
+    fraud_indicators: enrichIntel?.supplier.fraud_indicators,
+  } : null;
+  const complianceKey = complianceActive
+    ? `c|${session.session_id}|${score}|${anomalies.length}|${enrichIntel?.supplier.sanctions_check ?? ''}`
+    : '';
+  const { output: complianceOut, loading: complianceLoading, error: complianceError } = useAgentOutput(
+    'compliance', complianceCtx, complianceActive, complianceKey,
+  );
+
+  /* Decision agent — LIVE LLM-drafted verdict reasoning + recommended
+   * action. Only fires above the DECISION threshold; depends on the
+   * Investigator's Exa intel having landed for richer context. */
+  const decisionActive = score > TH.DECISION;
+  const decisionCtx = decisionActive ? {
+    session_id: session.session_id,
+    risk_score: risk?.final_risk_score,
+    risk_category: risk?.risk_category,
+    verdict_hint: risk?.verdict,
+    anomalies: anomalies.map(a => ({ rule: a.rule, severity: a.severity })),
+    sanctions_check: enrichIntel?.supplier.sanctions_check,
+    fraud_indicators: enrichIntel?.supplier.fraud_indicators,
+    high_risk_vessel: enrichIntel?.vessel.high_risk_patterns,
+    estimated_impact_usd: risk?.estimated_impact_usd,
+    lop_issued: session.lop_issued,
+  } : null;
+  const decisionKey = decisionActive
+    ? `d|${session.session_id}|${score}|${anomalies.length}|${enrichIntel?.supplier.fraud_indicators ?? ''}`
+    : '';
+  const { output: decisionOut, loading: decisionLoading, error: decisionError } = useAgentOutput(
+    'decision', decisionCtx, decisionActive, decisionKey,
+  );
 
   // Per-agent dynamic outputs derived from the live Supabase data
   const outputs: Record<AgentKey, { active: boolean; lines: string[] }> = useMemo(() => {
@@ -80,28 +137,98 @@ export function AgentWorkflow({ session, risk, anomalies, mfm, llm, geofence, ou
       geofenceLine,
     ];
 
-    // INVESTIGATOR — active when risk ≥ 40. Detection + risk + Exa.
+    // INVESTIGATOR — active when risk ≥ 40. Detection + risk + LIVE Exa
+    // via the new enrichment.enrich_entities backend pipeline. Falls back
+    // to whatever the offline pipeline persisted into llm_outputs if the
+    // live call is loading / errored / unavailable.
     const exaStep = llm?.payload?.tool_use_chain?.find((s) => s.tool === 'exa_search');
+    let exaLine: string;
+    if (enrichLoading) {
+      exaLine = `Exa enrichment running · supplier · vessel · barge · port…`;
+    } else if (enrichError) {
+      exaLine = `Exa error: ${enrichError.slice(0, 80)}${enrichError.length > 80 ? '…' : ''}`;
+    } else if (enrichIntel) {
+      // Pick the most operationally-meaningful signal to surface.
+      const sup = enrichIntel.supplier;
+      const ves = enrichIntel.vessel;
+      const supHits  = sup.litigation_history.hits.length + sup.negative_news.hits.length + sup.company_profile.hits.length;
+      const vesHits  = ves.vessel_history.hits.length + ves.previous_incidents.hits.length;
+      const flags: string[] = [];
+      if (sup.sanctions_check === 'POTENTIAL_MATCH_REVIEW') flags.push('sanctions match');
+      if (sup.fraud_indicators) flags.push('fraud indicators');
+      if (ves.high_risk_patterns) flags.push('high-risk vessel');
+      const flagText = flags.length ? ` · ⚑ ${flags.join(' · ')}` : '';
+      const topHit = sup.litigation_history.hits[0] ?? sup.negative_news.hits[0] ?? ves.previous_incidents.hits[0];
+      const topTitle = topHit?.title ? ` — "${topHit.title.slice(0, 50)}${topHit.title.length > 50 ? '…' : ''}"` : '';
+      exaLine = `Exa LIVE · ${supHits} supplier + ${vesHits} vessel hits${flagText}${topTitle}`;
+    } else if (exaStep?.output) {
+      exaLine = `Exa (cached): ${String(exaStep.output).slice(0, 90)}`;
+    } else {
+      exaLine = 'Exa enrichment skipped';
+    }
     const investigatorLines = [
       `${anomalies.length} anomalies triggered · ${anomalies.map((a) => a.rule).join(', ') || 'none'}`,
       `Risk engine → ${risk?.final_risk_score ?? '—'}/100 · ${risk?.risk_category ?? '—'}`,
-      exaStep?.output ? `Exa: ${exaStep.output}` : 'Exa enrichment skipped',
+      exaLine,
     ];
 
-    // COMPLIANCE — active when risk > 80. Evidence + blockchain.
-    const complianceLines = [
-      session.evidence_sha256 ? `Evidence SHA-256 ${session.evidence_sha256.slice(0, 14)}…` : 'Evidence package pending',
-      session.blockchain_tx ? `Ethereum tx ${session.blockchain_tx.slice(0, 14)}…` : 'No blockchain anchor',
-      `Hash chain · Ed25519 · HMAC verified`,
-    ];
+    // COMPLIANCE — active when risk > 80. LIVE LLM-drafted evidence summary
+    // via /api/agent-output (Anthropic today, Bedrock/Kiro later via
+    // llm-provider.ts). Falls back to the static evidence/blockchain
+    // hashes while the call is in flight or if it fails.
+    let complianceLines: string[];
+    if (complianceLoading) {
+      complianceLines = [
+        `Drafting compliance summary · ${score}/100 risk score · ${anomalies.length} anomalies…`,
+        session.evidence_sha256 ? `Evidence SHA-256 ${session.evidence_sha256.slice(0, 14)}…` : 'Evidence package pending',
+        'Hash chain · Ed25519 · HMAC verified',
+      ];
+    } else if (complianceError) {
+      complianceLines = [
+        `LLM error: ${complianceError.slice(0, 70)}${complianceError.length > 70 ? '…' : ''}`,
+        session.evidence_sha256 ? `Evidence SHA-256 ${session.evidence_sha256.slice(0, 14)}…` : 'Evidence package pending',
+        session.blockchain_tx ? `Ethereum tx ${session.blockchain_tx.slice(0, 14)}…` : 'No blockchain anchor',
+      ];
+    } else if (complianceOut?.ok && complianceOut.lines.length) {
+      complianceLines = complianceOut.lines.slice(0, 3);
+    } else {
+      complianceLines = [
+        session.evidence_sha256 ? `Evidence SHA-256 ${session.evidence_sha256.slice(0, 14)}…` : 'Evidence package pending',
+        session.blockchain_tx ? `Ethereum tx ${session.blockchain_tx.slice(0, 14)}…` : 'No blockchain anchor',
+        'Hash chain · Ed25519 · HMAC verified',
+      ];
+    }
 
-    // DECISION — active when risk > 90. AWS Bedrock + LoP + Verdict.
+    // DECISION — active when risk > 90. LIVE LLM-drafted verdict + impact +
+    // recommended action. Falls back to the stored verdict if the LLM is
+    // unavailable so the operator always sees *something* actionable.
     const conf = llm?.payload?.confidence != null ? Math.round(llm.payload.confidence * 100) : null;
-    const decisionLines = [
-      `Verdict ${(risk?.verdict ?? 'PENDING').replace(/_/g, ' ')} ${conf != null ? `· ${conf}% confidence` : ''}`,
-      session.lop_issued ? 'Letter of Protest drafted' : 'LoP not required',
-      'AWS Bedrock · investigation summary generated',
-    ];
+    const liveConf = decisionOut?.confidence;
+    let decisionLines: string[];
+    if (decisionLoading) {
+      decisionLines = [
+        `Generating verdict reasoning · ${score}/100 CRITICAL…`,
+        `Verdict ${(risk?.verdict ?? 'PENDING').replace(/_/g, ' ')} ${conf != null ? `· ${conf}% confidence` : ''}`,
+        session.lop_issued ? 'Letter of Protest drafted' : 'LoP draft pending',
+      ];
+    } else if (decisionError) {
+      decisionLines = [
+        `LLM error: ${decisionError.slice(0, 70)}${decisionError.length > 70 ? '…' : ''}`,
+        `Verdict ${(risk?.verdict ?? 'PENDING').replace(/_/g, ' ')} ${conf != null ? `· ${conf}% confidence` : ''}`,
+        session.lop_issued ? 'Letter of Protest drafted' : 'LoP not required',
+      ];
+    } else if (decisionOut?.ok && decisionOut.lines.length) {
+      decisionLines = decisionOut.lines.slice(0, 3);
+      if (liveConf != null) {
+        decisionLines = [`${decisionLines[0]} · ${liveConf}% confidence`, ...decisionLines.slice(1)];
+      }
+    } else {
+      decisionLines = [
+        `Verdict ${(risk?.verdict ?? 'PENDING').replace(/_/g, ' ')} ${conf != null ? `· ${conf}% confidence` : ''}`,
+        session.lop_issued ? 'Letter of Protest drafted' : 'LoP not required',
+        'AWS Bedrock · investigation summary generated',
+      ];
+    }
 
     return {
       surveyor:     { active: true,               lines: surveyorLines },
@@ -109,23 +236,106 @@ export function AgentWorkflow({ session, risk, anomalies, mfm, llm, geofence, ou
       compliance:   { active: score >  TH.COMPLIANCE,   lines: complianceLines },
       decision:     { active: score >  TH.DECISION,     lines: decisionLines },
     };
-  }, [session, risk, anomalies, mfm, llm, score]);
+  }, [session, risk, anomalies, mfm, llm, score, outsideGeofence, geofence,
+      enrichIntel, enrichLoading, enrichError,
+      complianceOut, complianceLoading, complianceError,
+      decisionOut, decisionLoading, decisionError]);
 
+  /**
+   * Persist a Chief Engineer sign-off to Supabase by routing it through
+   * `llm_outputs` — the natural extension of the existing 4-stage agent
+   * pipeline (Surveyor→Investigator→Compliance→Decision are stages 1-4;
+   * Chief Engineer is stage 5, model = "human:chief_engineer").
+   *
+   * Why this table: it already exists, has a JSONB `payload` column
+   * perfect for the action + signer + timestamp, and is already keyed by
+   * `session_id`. Reads happen via useLiveSession which now also pulls
+   * stage 5 and injects the latest action onto `session.sign_off_status`.
+   *
+   * Append-only: every sign / re-sign / override writes a new row,
+   * preserving the full audit trail by `id DESC`.
+   */
   async function handleSignOff(action: 'approved' | 'overridden') {
     setSignOff('saving');
     setSignOffError(null);
     const newStatus = action === 'approved' ? 'APPROVED' : 'OVERRIDDEN';
+
     const { error } = await supabase
-      .from('sessions')
-      .update({ status: newStatus })
-      .eq('session_id', session.session_id);
+      .from('llm_outputs')
+      .insert({
+        session_id: session.session_id,
+        stage: 5,
+        model: 'human:chief_engineer',
+        prompt_tokens: 0,
+        output_tokens: 0,
+        payload: {
+          kind: 'sign_off',
+          action: newStatus,
+          signer_role: 'Chief Engineer',
+          signed_at: new Date().toISOString(),
+          risk_score_at_sign:  risk?.final_risk_score ?? null,
+          verdict_at_sign:     risk?.verdict ?? null,
+          risk_category_at_sign: risk?.risk_category ?? null,
+        },
+      });
     if (error) {
       setSignOffError(error.message);
       setSignOff('pending');
       return;
     }
+
     setSignOff(action);
-    onSessionUpdated?.({ status: newStatus });
+    onSessionUpdated?.({ sign_off_status: newStatus });
+
+    // 4. Generate a "Sign-Off Audit" PDF and persist it. Lands on the
+    //    Reports tab as a real downloadable document (Supabase Storage
+    //    primary, localStorage fallback if the bucket isn't provisioned).
+    try {
+      const verdictRgb: [number, number, number] =
+        newStatus === 'APPROVED'    ? [22, 119, 78] :
+        newStatus === 'OVERRIDDEN' ? [184, 110, 30] : [92, 83, 64];
+      await saveReportPdf({
+        kind: 'Sign-Off Audit',
+        title: session.session_id,
+        subtitle: `${session.vessel_name ?? ''}${session.supplier_name ? ' · ' + session.supplier_name : ''}`,
+        sessionId: session.session_id,
+        generatedAt: new Date().toISOString(),
+        verdict: { label: newStatus, color: verdictRgb },
+        facts: [
+          { label: 'Action', value: newStatus },
+          { label: 'Signer', value: 'Chief Engineer' },
+          { label: 'Risk',   value: `${risk?.final_risk_score ?? '—'} / 100 · ${risk?.risk_category ?? '—'}` },
+          session.bdn_qty_mt != null && { label: 'BDN qty',   value: `${session.bdn_qty_mt} MT` },
+          session.mfm_qty_mt != null && { label: 'MFM',       value: `${Number(session.mfm_qty_mt).toFixed(2)} MT` },
+          session.dev_pct    != null && { label: 'Deviation', value: `${Number(session.dev_pct).toFixed(2)}%`, warn: true },
+          session.port              && { label: 'Port',      value: String(session.port) },
+        ].filter(Boolean) as any,
+        sections: [
+          risk?.verdict && {
+            type: 'paragraph' as const,
+            heading: 'AI Verdict',
+            text: `${(risk.verdict || '').replace(/_/g, ' ')} — risk score ${risk.final_risk_score}/100 (${risk.risk_category}).`,
+          },
+          anomalies.length > 0 && {
+            type: 'bullets' as const,
+            heading: 'Anomalies On Record',
+            items: anomalies.slice(0, 12).map((a) =>
+              `${a.rule}${a.rule_name ? ' · ' + a.rule_name : ''} (${a.severity})${a.description ? ' — ' + a.description : ''}`,
+            ),
+          },
+          {
+            type: 'paragraph' as const,
+            heading: 'Sign-Off Statement',
+            text: `I, acting as Chief Engineer, have reviewed the BunkerGuard agent verdict and the evidence presented above. My final decision on session ${session.session_id} is ${newStatus}.`,
+          },
+        ].filter(Boolean) as any,
+      });
+    } catch (e: any) {
+      // PDF generation failure is non-blocking — the sign-off itself
+      // already succeeded above.
+      // eslint-disable-next-line no-console
+      console.warn('[handleSignOff] PDF save failed:', e?.message ?? e);
+    }
   }
 
   return (
@@ -149,23 +359,21 @@ export function AgentWorkflow({ session, risk, anomalies, mfm, llm, geofence, ou
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {AGENTS.map((agent) => {
           const out = outputs[agent.key];
-          const Icon = agent.icon;
           return (
             <div key={agent.key} style={{
               display: 'flex', gap: 10,
               opacity: out.active ? 1 : 0.45,
             }}>
-              {/* Rail circle */}
-              <div style={{
-                width: 28, height: 28, borderRadius: '50%',
-                background: out.active ? `${agent.color}33` : 'rgba(127,165,211,0.10)',
-                border: `1px solid ${out.active ? agent.color : '#3D5A75'}`,
-                color: out.active ? agent.color : '#7FA5D3',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                flexShrink: 0,
-              }}>
-                <Icon size={14} />
-              </div>
+              {/* Rail circle — Kiro ghost, the BunkerGuard agent mascot.
+                  Active agents glow in their per-agent colour and blink;
+                  dormant agents fall back to a muted slate ghost. */}
+              <KiroGhostBadge
+                size={28}
+                shape="circle"
+                color={out.active ? agent.color : '#3D5A75'}
+                title={`${agent.name} agent`}
+                src={agent.key === 'investigator' ? AGENT_AVATAR_SRC.exa : AGENT_AVATAR_SRC.kiro}
+              />
 
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -291,7 +499,7 @@ export function AgentWorkflow({ session, risk, anomalies, mfm, llm, geofence, ou
             )}
             {signOff === 'saving' && (
               <div style={{ fontSize: 10, color: '#7FA5D3', marginTop: 6 }}>
-                writing to sessions.status…
+                Recording sign-off (llm_outputs stage 5)…
               </div>
             )}
             {signOff === 'approved' && (
@@ -304,7 +512,7 @@ export function AgentWorkflow({ session, risk, anomalies, mfm, llm, geofence, ou
                 fontSize: 10.5, fontWeight: 700, letterSpacing: 0.6,
                 display: 'flex', alignItems: 'center', gap: 6,
               }}>
-                <CheckCircle2 size={12} /> VERDICT APPROVED · sessions.status = APPROVED
+                <CheckCircle2 size={12} /> VERDICT APPROVED · written to llm_outputs
               </div>
             )}
             {signOff === 'overridden' && (
@@ -317,12 +525,21 @@ export function AgentWorkflow({ session, risk, anomalies, mfm, llm, geofence, ou
                 fontSize: 10.5, fontWeight: 700, letterSpacing: 0.6,
                 display: 'flex', alignItems: 'center', gap: 6,
               }}>
-                <X size={12} /> AGENT VERDICT OVERRIDDEN · sessions.status = OVERRIDDEN
+                <X size={12} /> AGENT VERDICT OVERRIDDEN · written to llm_outputs
               </div>
             )}
+            {/* Real DB error — sign-off didn't persist. No more soft-warning
+             *  fallback: the path always goes to Supabase now. */}
             {signOffError && (
-              <div style={{ marginTop: 6, fontSize: 10, color: '#FF5656' }}>
-                {signOffError}
+              <div style={{
+                marginTop: 6, padding: '6px 8px',
+                fontSize: 10, lineHeight: 1.4,
+                color: '#FF5656',
+                background: 'rgba(255,86,86,0.08)',
+                border: '1px solid rgba(255,86,86,0.30)',
+                borderRadius: 4,
+              }}>
+                Sign-off failed: {signOffError}
               </div>
             )}
           </div>

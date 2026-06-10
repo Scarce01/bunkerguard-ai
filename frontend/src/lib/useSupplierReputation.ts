@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { supabase } from './supabase';
-import { aggregateSupplierCarbon, mapCarbonSession, type CarbonRiskLevel } from './carbon';
 
 export interface AdaptedReputationTransaction {
   id: string;
@@ -13,8 +12,6 @@ export interface AdaptedReputationTransaction {
   mismatchPercent: number;
   riskScore: { total: number };
   verdict: string;
-  fuelGrade: string;
-  estimatedCarbonTco2e: number;
 }
 
 export interface AdaptedSupplierReputation {
@@ -31,10 +28,6 @@ export interface AdaptedSupplierReputation {
   trendDirection: string;
   reputationHistory: Array<{ month: string; score: number }>;
   historicalTransactions: AdaptedReputationTransaction[];
-  totalCarbonExposure: number;
-  carbonRiskLevel: CarbonRiskLevel;
-  carbonExposureTrend: Array<{ date: string; tco2e: number }>;
-  carbonEstimatedFromAvailableData: boolean;
 }
 
 export interface SupplierReputationData {
@@ -53,20 +46,15 @@ export function useSupplierReputation(supplierId: string = 'SUP-003'): SupplierR
 
     async function load() {
       try {
-        const [supRes, txRes, sessionRes] = await Promise.all([
+        const [supRes, txRes] = await Promise.all([
           supabase.from('suppliers').select('*').eq('id', supplierId).maybeSingle(),
           supabase.from('historical_transactions')
-            .select('*')
-            .eq('supplier_id', supplierId)
-            .order('delivery_date', { ascending: false }),
-          supabase.from('sessions')
             .select('*')
             .eq('supplier_id', supplierId)
             .order('delivery_date', { ascending: false }),
         ]);
         if (supRes.error) throw supRes.error;
         if (txRes.error) throw txRes.error;
-        if (sessionRes.error) throw sessionRes.error;
 
         const s: any = supRes.data;
         if (!s) {
@@ -74,8 +62,6 @@ export function useSupplierReputation(supplierId: string = 'SUP-003'): SupplierR
           return;
         }
         const tx: any[] = txRes.data ?? [];
-        const carbonSessions = (sessionRes.data ?? []).map((row: any) => mapCarbonSession(row));
-        const carbon = aggregateSupplierCarbon(carbonSessions)[0];
 
         // Build a 6-month reputation history from the transactions (one point
         // per month, supplier reputation derived from rolling avg).
@@ -110,10 +96,6 @@ export function useSupplierReputation(supplierId: string = 'SUP-003'): SupplierR
           reputationHistory: reputationHistory.length > 0 ? reputationHistory : [
             { month: 'Jan/26', score: s.reputation_score ?? 0 },
           ],
-          totalCarbonExposure: carbon?.carbonTco2e ?? Number(s.estimated_carbon_tco2e ?? 0),
-          carbonRiskLevel: carbon?.carbonRiskLevel ?? s.carbon_risk_level ?? 'LOW',
-          carbonExposureTrend: carbon?.trend ?? [],
-          carbonEstimatedFromAvailableData: carbon?.estimatedFromAvailableData ?? s.estimated_carbon_tco2e == null,
           historicalTransactions: tx.map((t) => {
             const num = (t.session_id?.match(/(\d+)$/) ?? [])[1] ?? t.session_id;
             return {
@@ -127,8 +109,6 @@ export function useSupplierReputation(supplierId: string = 'SUP-003'): SupplierR
               mismatchPercent: Math.abs(Number(t.discrepancy_pct ?? 0)),
               riskScore: { total: Number(t.risk_score ?? 0) },
               verdict: t.verdict ?? 'PENDING',
-              fuelGrade: t.fuel_grade ?? 'VLSFO',
-              estimatedCarbonTco2e: Number(t.estimated_carbon_tco2e ?? 0),
             };
           }),
         };

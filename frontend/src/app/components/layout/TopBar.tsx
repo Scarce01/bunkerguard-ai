@@ -2,21 +2,21 @@ import { Search, Bell, User, X, AlertTriangle, CheckCircle2, Info, Fuel } from '
 import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router';
 import { useFuelReference } from '../../../lib/useFuelReference';
+import { useNow, SyncBadge } from '../../../lib/useNowClock';
 
 export function TopBar() {
   const navigate = useNavigate();
-  const [currentTime, setCurrentTime] = useState(new Date());
+  // Wall clock + per-tab refetch heartbeat now come from the single
+  // NowClockProvider mounted at the App root, so every page derives "now"
+  // from the same source. The old per-component setInterval is gone.
+  const nowMs = useNow();
+  const currentTime = new Date(nowMs);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const fuel = useFuelReference();
   const vlsfo = fuel.priceFor('VLSFO RMG 380');
   const notificationsRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -113,6 +113,7 @@ export function TopBar() {
               <span className="text-[9px] text-foreground-muted">/MT</span>
             </div>
           )}
+          <SyncBadge />
           <div className="text-right">
             <div className="text-sm font-semibold text-foreground tabular-nums">{formatTime(currentTime)}</div>
             <div className="text-xs text-foreground-muted">{formatDate(currentTime)}</div>

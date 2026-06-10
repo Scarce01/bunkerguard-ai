@@ -288,8 +288,6 @@ function ReportPreview({ report }: { report: any }) {
     blocks.push({ heading: 'Anomalies Detected', body: report.anomalies_detected });
   if (report.risk_assessment)
     blocks.push({ heading: 'Risk Assessment', body: report.risk_assessment });
-  if (report.environmental_impact)
-    blocks.push({ heading: 'Environmental Impact', body: report.environmental_impact });
   if (report.recommended_actions)
     blocks.push({ heading: 'Recommended Actions', body: report.recommended_actions });
   if (report.llm_explanation)
@@ -298,7 +296,7 @@ function ReportPreview({ report }: { report: any }) {
   // Catch-all for any unexpected keys
   const known = new Set([
     'executive_summary', 'session_identification', 'delivery_data', 'anomalies_detected',
-    'risk_assessment', 'environmental_impact', 'recommended_actions', 'llm_explanation',
+    'risk_assessment', 'recommended_actions', 'llm_explanation',
     'report_id', 'session_id', 'generated_at', 'sign_off_status', 'report_hash',
   ]);
   Object.keys(report).forEach((k) => {

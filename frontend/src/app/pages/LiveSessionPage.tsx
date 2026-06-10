@@ -1,5 +1,5 @@
 import { useNavigate, useLocation } from 'react-router';
-import { AlertTriangle, Cpu, Activity, ChevronRight, Satellite } from 'lucide-react';
+import { AlertTriangle, Cpu, Activity, Satellite } from 'lucide-react';
 import { useGeofence } from '../../lib/useGeofence';
 import { useState } from 'react';
 import { LiveSessionScene } from '../components/live/LiveSessionScene';
@@ -16,15 +16,26 @@ export function LiveSessionPage() {
   const focusSessionId = qs.get('session') || FOCUS_SESSION_ID;
   const cameraMode: 'top' | 'iso' = qs.get('view') === 'iso' ? 'iso' : 'top';
   const live = useLiveSessionHook(focusSessionId);
-  const [sessionPatch, setSessionPatch] = useState<{ status?: string }>({});
+  const [sessionPatch, setSessionPatch] = useState<{ status?: string; sign_off_status?: string }>({});
   const liveSession = live.session ? { ...live.session, ...sessionPatch } : null;
   const { geofence } = useGeofence('Eastern');
   const [driftSim, setDriftSim] = useState(false);
   const outsideGeofence = driftSim;
 
   const latestPacket = live.mfm[live.mfm.length - 1] ?? null;
-  const totalMfm = latestPacket?.cumulative_mt ?? live.session?.mfm_qty_mt ?? 0;
+  /* Prefer the shared-clock deriver while the session is ongoing — that's
+   * what makes the headline TRANSFER / SHORTAGE numbers here tick in
+   * lock-step with the Dashboard pin and the Sessions list. For completed
+   * sessions we fall back to the last MFM packet (or the stored snapshot)
+   * so historical sessions read as they did when the deal closed. */
+  const totalMfm =
+    live.live?.isOngoing
+      ? live.live.cumMt
+      : (latestPacket?.cumulative_mt ?? live.session?.mfm_qty_mt ?? 0);
   const shortage = (live.session?.bdn_qty_mt ?? 0) - totalMfm;
+  /* Progress comes straight from the deriver — same calc the dashboard pin
+   * and the sessions list use, so the percentage agrees everywhere. */
+  const progressPct = live.live?.progressPct ?? 0;
 
   const riskColor =
     live.risk?.risk_category === 'CRITICAL' ? '#FF5656' :
@@ -100,7 +111,7 @@ export function LiveSessionPage() {
               position: 'absolute', left: 16, right: 16, bottom: 14,
               display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10,
             }}>
-              <KpiBlock label="TRANSFER" value={`${Math.round((totalMfm / (live.session.bdn_qty_mt || 1)) * 100)}%`} color="#4A9EFF" />
+              <KpiBlock label="TRANSFER" value={`${progressPct}%`} color="#4A9EFF" />
               <KpiBlock label="DURATION" value={`${live.session.duration_h ?? 0}h`} color="#7FA5D3" />
               <KpiBlock label="SHORTAGE" value={`${shortage.toFixed(1)} MT`} color={shortage > 0 ? '#FF5656' : '#00D98E'} />
               <KpiBlock label="ALERTS" value={`${live.anomalies.length}`} color={live.anomalies.length > 0 ? '#FFA940' : '#00D98E'} />
@@ -281,21 +292,6 @@ export function LiveSessionPage() {
               })}
             </div>
           </div>
-
-          <button
-            onClick={() => navigate('/evidence')}
-            style={{
-              padding: '10px 14px',
-              fontSize: 12, fontWeight: 700, letterSpacing: 0.5,
-              background: 'rgba(74,158,255,0.15)',
-              border: '1px solid rgba(74,158,255,0.3)',
-              borderRadius: 8,
-              color: '#4A9EFF',
-              cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-            }}>
-            View evidence chain <ChevronRight size={13} />
-          </button>
 
           <TechStackBadges />
         </div>

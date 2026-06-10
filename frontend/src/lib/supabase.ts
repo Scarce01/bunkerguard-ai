@@ -55,7 +55,22 @@ export interface SessionRow {
   risk_category: RiskCategory | null;
   verdict: string | null;
   status: SessionStatus | null;
+  /** Chief Engineer (human-in-the-loop) verdict layer. Decoupled from
+   *  `status` so it doesn't collide with the operational enum. Backed by
+   *  the `sign_offs` audit table (migration 20260610_sign_offs.sql). */
+  sign_off_status?: 'APPROVED' | 'OVERRIDDEN' | 'PENDING_REVIEW' | null;
   created_at: string;
+}
+
+export interface SignOffRow {
+  sign_off_id: number;
+  session_id: string;
+  action: 'APPROVED' | 'OVERRIDDEN' | 'PENDING_REVIEW';
+  signer_role: string;
+  signer_name: string | null;
+  notes: string | null;
+  evidence_hash: string | null;
+  signed_at: string;
 }
 
 export interface AnomalyRow {

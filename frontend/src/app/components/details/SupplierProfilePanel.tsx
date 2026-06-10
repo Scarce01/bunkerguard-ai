@@ -1,5 +1,10 @@
 import { Building2, Mail, Phone, MapPin, AlertTriangle, TrendingDown, TrendingUp, FileWarning, Calendar, CheckCircle, XCircle } from 'lucide-react';
 import type { SupplierReputation } from '../../../data/types';
+import { KiroGhostBadge } from '../ai/KiroGhost';
+// Building2 is retained on imports for the type annotation but the visible
+// header glyph is now Kiro, the per-supplier agent mascot. Keep the import
+// so any inline usage further down (e.g. contact rows) keeps working.
+void Building2;
 
 interface SupplierProfilePanelProps {
   supplier: SupplierReputation;
@@ -38,7 +43,9 @@ export function SupplierProfilePanel({ supplier, onClose }: SupplierProfilePanel
       <div style={{ padding: '18px 24px', borderBottom: '1px solid rgba(255,255,255,0.10)', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <Building2 style={{ width: 18, height: 18, color: '#4A9EFF' }} />
+            {/* Kiro — the per-supplier agent. Colour reflects current
+                trend (improving = green, worsening = red, stable = blue). */}
+            <KiroGhostBadge size={28} shape="circle" color={trendColor} title={`${supplier.name} agent`} />
             <div>
               <div style={{ fontSize: 15, fontWeight: 700, color: '#EAF4FF' }}>Supplier Profile</div>
               <div style={{ fontSize: 11, color: '#7FA5D3', marginTop: 2 }}>{supplier.name}</div>

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { apiUrl } from './api';
 
 export interface EvidenceReportSection {
   heading: string;
@@ -107,7 +106,7 @@ export function useEvidenceReport() {
     }, 1100));
 
     try {
-      const res = await fetch(apiUrl('/api/evidence-report'), {
+      const res = await fetch('/api/evidence-report', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: sessionId }),

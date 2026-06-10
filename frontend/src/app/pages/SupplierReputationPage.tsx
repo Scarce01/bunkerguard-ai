@@ -6,6 +6,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { useSupplierReputation } from '../../lib/useSupplierReputation';
 import { useSuppliersList } from '../../lib/useSuppliersList';
 import { useParams, useNavigate } from 'react-router';
+import { SupplierLogo } from '../components/suppliers/SupplierLogo';
 
 /** /suppliers (no id) → grid view of all suppliers
  *  /suppliers/:id    → individual supplier dossier (existing detail UI) */
@@ -68,11 +69,20 @@ function SuppliersIndex() {
                 </span>
                 <span style={{ fontSize: 9, color: '#7FA5D3', fontFamily: "'JetBrains Mono', monospace" }}>{s.id}</span>
               </div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: '#FFFFFF', marginBottom: 4, lineHeight: 1.25 }}>
-                {s.name}
-              </div>
-              <div style={{ fontSize: 10, color: '#7FA5D3', fontFamily: "'JetBrains Mono', monospace", marginBottom: 12 }}>
-                {s.mpaLicence ?? '—'}
+              {/* Logo + supplier name row — brand mark loads from
+               *  /suppliers/<key>.png with a text-initials fallback when
+               *  the PNG isn't present, so missing files never break the
+               *  card. */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 14 }}>
+                <SupplierLogo id={s.id} name={s.name} size={128} borderColor={`${col.border}55`} />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: '#FFFFFF', marginBottom: 4, lineHeight: 1.25 }}>
+                    {s.name}
+                  </div>
+                  <div style={{ fontSize: 10, color: '#7FA5D3', fontFamily: "'JetBrains Mono', monospace" }}>
+                    {s.mpaLicence ?? '—'}
+                  </div>
+                </div>
               </div>
 
               <div className="flex items-end justify-between">
@@ -111,9 +121,6 @@ function SuppliersIndex() {
                   {s.criticalCount > 0
                     ? <><Shield size={10} style={{ display: 'inline', marginRight: 4, color: '#FF5656' }} /> {s.criticalCount} critical</>
                     : 'No critical incidents'}
-                </span>
-                <span style={{ color: '#2EA8FF', fontFamily: "'JetBrains Mono', monospace" }}>
-                  {s.totalCarbonExposure.toFixed(0)} tCO2e · {s.carbonRiskLevel}
                 </span>
                 <span className="flex items-center gap-1" style={{ color: col.text, fontWeight: 700 }}>
                   View dossier <ArrowRight size={11} />
@@ -157,9 +164,18 @@ function SupplierDetail({ supplierId }: { supplierId: string }) {
       <div className="grid grid-cols-3 gap-6">
         <SectionPanel title="Supplier Profile">
           <div className="space-y-4">
-            <div>
-              <div className="text-xs text-foreground-muted mb-1">Supplier Name</div>
-              <div className="font-semibold text-foreground">{supplier.supplierName}</div>
+            {/* Brand mark — large, prominent at the top of the dossier
+                so the operator can confirm at a glance which supplier
+                they're looking at. Same fallback rules as the index
+                cards (initials chip if PNG is missing). */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
+              <SupplierLogo id={supplierId} name={supplier.supplierName} size={168} />
+              <div style={{ minWidth: 0 }}>
+                <div className="text-xs text-foreground-muted mb-1">Supplier Name</div>
+                <div className="font-semibold text-foreground" style={{ lineHeight: 1.25 }}>
+                  {supplier.supplierName}
+                </div>
+              </div>
             </div>
             <div>
               <div className="text-xs text-foreground-muted mb-1">Licence</div>
@@ -258,38 +274,6 @@ function SupplierDetail({ supplierId }: { supplierId: string }) {
           </div>
         </SectionPanel>
       </div>
-
-      <SectionPanel title="Carbon Exposure (Supplementary)">
-        <div className="grid grid-cols-3 gap-6">
-          <div>
-            <div className="text-xs text-foreground-muted mb-1">Total Carbon Exposure</div>
-            <div className="text-2xl font-bold text-foreground">
-              {(supplier.totalCarbonExposure ?? 0).toLocaleString(undefined, { maximumFractionDigits: 1 })} tCO2e
-            </div>
-          </div>
-          <div>
-            <div className="text-xs text-foreground-muted mb-1">Carbon Risk Level</div>
-            <div className="text-xl font-bold text-primary">{supplier.carbonRiskLevel ?? 'LOW'}</div>
-            <div className="text-xs text-foreground-muted mt-1">Shown alongside, never instead of, fraud risk.</div>
-          </div>
-          <div>
-            <div className="text-xs text-foreground-muted mb-2">Carbon Exposure Trend</div>
-            <div className="flex items-end gap-1 h-12">
-              {(supplier.carbonExposureTrend?.length
-                ? supplier.carbonExposureTrend.slice(-8)
-                : [{ tco2e: supplier.totalCarbonExposure ?? 0 }]
-              ).map((point: any, index: number, points: any[]) => {
-                const max = Math.max(...points.map((item: any) => item.tco2e), 1);
-                return <div key={index} className="flex-1 bg-primary/40 rounded-t" style={{ height: `${Math.max(8, (point.tco2e / max) * 100)}%` }} />;
-              })}
-            </div>
-          </div>
-        </div>
-        <div className="mt-4 pt-3 border-t border-border text-xs text-foreground-muted">
-          Carbon exposure is calculated from delivered fuel quantity × fuel-grade emission factor.
-          {supplier.carbonEstimatedFromAvailableData && <span className="text-warning"> Estimated from available session data.</span>}
-        </div>
-      </SectionPanel>
 
       {/* Reputation Trend */}
       <SectionPanel title="Reputation Trend (Last 6 Weeks)">

@@ -5,7 +5,6 @@ import {
   TrendingDown,
   ArrowRight,
   Ship,
-  ExternalLink,
   Shield,
   TrendingUp,
 } from 'lucide-react';
@@ -116,7 +115,7 @@ export function DashboardPage() {
     : 'Port of Singapore · 10 terminals tracked';
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', minHeight: 0, background: '#07111D' }}>
+    <div style={{ flex: 1, minHeight: 0, background: '#07111D' }}>
       <div style={{ padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
         {/* Header */}
@@ -212,7 +211,15 @@ export function DashboardPage() {
                   <SingaporeMap
                     onSelect={setSelectedTerminal}
                     resetSignal={mapResetSignal}
-                    onDeliveryClick={(d) => navigate(`/live?session=${encodeURIComponent(d.session_id)}&view=iso`)}
+                    /* Dashboard pin → Live Session.
+                     *   - view=top  : same default camera as the sidebar tab
+                     *   - session   : pass the pin's session_id explicitly
+                     *                 (today useActiveDeliveries only returns
+                     *                 the focus demo session, so this resolves
+                     *                 to the same Supabase row the sidebar's
+                     *                 /live link opens — identical telemetry
+                     *                 either way the operator arrives). */
+                    onDeliveryClick={(d) => navigate(`/live?session=${encodeURIComponent(d.session_id)}&view=top`)}
                   />
                 </div>
                 <div style={{
@@ -233,15 +240,17 @@ export function DashboardPage() {
               </div>
             </div>
 
-            {/* CRITICAL EVENTS — scoped */}
-            <div style={{ background: 'linear-gradient(180deg, #102033 0%, #0E1C2D 100%)', border: '1px solid rgba(255,255,255,0.09)', borderRadius: 8, overflow: 'hidden', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+            {/* CRITICAL EVENTS — natural-flow card. On laptop screens the
+                list extends the page (which scrolls in <main>) rather than
+                clipping behind a fixed-height window. */}
+            <div style={{ background: 'linear-gradient(180deg, #102033 0%, #0E1C2D 100%)', border: '1px solid rgba(255,255,255,0.09)', borderRadius: 8, display: 'flex', flexDirection: 'column' }}>
               <div style={{ padding: '10px 18px', borderBottom: '1px solid rgba(255,255,255,0.09)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#FF6B6B', display: 'inline-block', animation: 'livePulse 2s ease-in-out infinite' }} />
                   <span style={{ fontSize: 14, fontWeight: 700, color: '#FFFFFF' }}>Critical Events</span>
                 </div>
               </div>
-              <div style={{ flex: 1, padding: '12px 18px', display: 'flex', flexDirection: 'column', gap: 6, overflowY: 'auto', minHeight: 0 }}>
+              <div style={{ padding: '12px 18px', display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {hasTerminalContext && !scopedDash && (
                   <NoTerminalData label="critical events" contextName={contextLabel} />
                 )}
@@ -479,22 +488,6 @@ export function DashboardPage() {
                       >
                         Open Critical Session · {criticalSessionId}
                         <ArrowRight style={{ width: 12, height: 12 }} />
-                      </button>
-                      <button
-                        onClick={() => navigate('/blockchain')}
-                        title="View blockchain-anchored evidence chain"
-                        style={{
-                          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                          padding: '9px 12px', fontSize: 11, fontWeight: 600, cursor: 'pointer',
-                          background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.08)',
-                          borderRadius: 8,
-                          color: '#A8C8E8', transition: 'all 140ms',
-                        }}
-                        onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.12)'; }}
-                        onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; }}
-                      >
-                        View Evidence Chain
-                        <ExternalLink style={{ width: 11, height: 11 }} />
                       </button>
                     </div>
                   </>

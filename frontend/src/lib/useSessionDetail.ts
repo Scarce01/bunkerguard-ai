@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { supabase } from './supabase';
-import { calculateCarbonExposure } from './carbon';
 
 /* ─── Shape returned to SessionDetailPage ─────────────────────────────
  * Matches the mockSession structure the existing 549-line UI expects.
@@ -33,14 +32,6 @@ export interface AdaptedSession {
   mfmQuantity: number;
   mismatchMT: number;
   mismatchPercent: number;
-  carbonExposure: {
-    quantityMt: number;
-    fuelGrade: string;
-    emissionFactor: number;
-    estimatedTco2e: number;
-    carbonRiskLevel: string;
-    estimatedFromAvailableData: boolean;
-  };
 
   riskScore: {
     total: number;
@@ -182,9 +173,6 @@ export function useSessionDetail(sessionId: string | undefined): SessionDetailDa
         const startISO: string = s.start_time && s.delivery_date
           ? `${s.delivery_date}T${s.start_time}+08:00`
           : s.created_at ?? new Date().toISOString();
-        const deliveredQuantity = Number(s.total_fuel_mt ?? s.mfm_qty_mt ?? s.bdn_qty_mt ?? 0);
-        const carbon = calculateCarbonExposure(deliveredQuantity, s.fuel_grade);
-        const hasPersistedCarbon = s.emission_factor_tco2e_per_mt != null && s.estimated_carbon_tco2e != null;
 
         const session: AdaptedSession = {
           id: s.session_id,
@@ -202,14 +190,6 @@ export function useSessionDetail(sessionId: string | undefined): SessionDetailDa
           mfmQuantity: Number(s.mfm_qty_mt ?? 0),
           mismatchMT: Math.abs(Number(s.dev_mt ?? 0)),
           mismatchPercent: Math.abs(Number(s.dev_pct ?? 0)),
-          carbonExposure: {
-            quantityMt: deliveredQuantity,
-            fuelGrade: s.fuel_grade || carbon.fuelGrade,
-            emissionFactor: Number(s.emission_factor_tco2e_per_mt ?? carbon.emissionFactor),
-            estimatedTco2e: Number(s.estimated_carbon_tco2e ?? carbon.estimatedTco2e),
-            carbonRiskLevel: s.carbon_risk_level ?? carbon.carbonRiskLevel,
-            estimatedFromAvailableData: !hasPersistedCarbon || carbon.usedFallbackFuelGrade,
-          },
           riskScore: {
             total: Number(risk.final_risk_score ?? s.risk_score ?? 0),
             level: risk.risk_category ?? s.risk_category ?? 'LOW',
