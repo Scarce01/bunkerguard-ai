@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 from unittest.mock import patch
-
-import pytest
 from botocore.exceptions import ClientError
 
 from llm import claude_client
@@ -82,7 +80,7 @@ def test_bedrock_inference_profile_error_falls_back_to_openrouter(monkeypatch) -
     fallback.assert_called_once()
 
 
-def test_non_access_denied_bedrock_error_does_not_fallback(monkeypatch) -> None:
+def test_any_bedrock_error_falls_back_to_openrouter(monkeypatch) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "bedrock")
     monkeypatch.setenv("BEDROCK_MODEL_ID", "bedrock-test-model")
     bedrock = type(
@@ -95,12 +93,51 @@ def test_non_access_denied_bedrock_error_does_not_fallback(monkeypatch) -> None:
 
     with (
         patch.object(claude_client, "_get_bedrock_client", return_value=bedrock),
-        patch.object(claude_client, "_call_openrouter") as fallback,
-        pytest.raises(ClientError),
+        patch.object(
+            claude_client,
+            "_call_openrouter",
+            return_value={"provider_used": "openrouter"},
+        ) as fallback,
     ):
-        claude_client.call_text(
+        result = claude_client.call_text(
             "system",
             [{"role": "user", "content": "hello"}],
         )
 
+    assert result["provider_used"] == "openrouter"
+    fallback.assert_called_once()
+
+
+def test_bedrock_success_remains_primary(monkeypatch) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "bedrock")
+    monkeypatch.setenv(
+        "BEDROCK_MODEL_ID",
+        "us.anthropic.claude-sonnet-4-6",
+    )
+    bedrock = type(
+        "BedrockClient",
+        (),
+        {
+            "converse": lambda *args, **kwargs: {
+                "output": {
+                    "message": {
+                        "content": [{"text": "Bedrock response"}],
+                    },
+                },
+                "usage": {"inputTokens": 2, "outputTokens": 3},
+            },
+        },
+    )()
+
+    with (
+        patch.object(claude_client, "_get_bedrock_client", return_value=bedrock),
+        patch.object(claude_client, "_call_openrouter") as fallback,
+    ):
+        result = claude_client.call_text(
+            "system",
+            [{"role": "user", "content": "hello"}],
+        )
+
+    assert result["provider_used"] == "bedrock"
+    assert result["model"] == "us.anthropic.claude-sonnet-4-6"
     fallback.assert_not_called()

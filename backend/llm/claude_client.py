@@ -174,22 +174,6 @@ def _provider_result(
     }
 
 
-def _should_fallback_from_bedrock(exc: Exception) -> bool:
-    try:
-        from botocore.exceptions import ClientError
-    except ImportError:
-        return False
-    if not isinstance(exc, ClientError):
-        return False
-    error = exc.response.get("Error", {})
-    code = error.get("Code")
-    message = str(error.get("Message", "")).lower()
-    return code == "AccessDeniedException" or (
-        code == "ValidationException"
-        and ("inference profile" in message or "on-demand throughput" in message)
-    )
-
-
 def _call_openrouter(
     system_prompt: str,
     messages: list[dict[str, str]],
@@ -282,11 +266,13 @@ def call_text(
                 inferenceConfig={"maxTokens": max_tokens, "temperature": 0.1},
             )
         except Exception as exc:
-            if not _should_fallback_from_bedrock(exc):
-                raise
             log.warning(
                 "bedrock_unavailable_falling_back",
-                extra={"model": model_id, "fallback_provider": "openrouter"},
+                extra={
+                    "model": model_id,
+                    "fallback_provider": "openrouter",
+                    "error_type": type(exc).__name__,
+                },
             )
             return _call_openrouter(
                 system_prompt,

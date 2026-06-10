@@ -19,9 +19,23 @@ def _event(method: str, path: str, body: dict | None = None) -> dict:
 
 
 def test_health() -> None:
-    response = lambda_app.handler(_event("GET", "/health"), None)
+    with patch.dict(
+        "os.environ",
+        {
+            "LLM_PROVIDER": "bedrock",
+            "AWS_REGION": "us-west-2",
+            "BEDROCK_MODEL_ID": "us.anthropic.claude-sonnet-4-6",
+            "OPENROUTER_API_KEY": "configured",
+        },
+    ):
+        response = lambda_app.handler(_event("GET", "/health"), None)
     assert response["statusCode"] == 200
-    assert json.loads(response["body"])["ok"] is True
+    body = json.loads(response["body"])
+    assert body["ok"] is True
+    assert body["bedrock_configured"] is True
+    assert body["openrouter_configured"] is True
+    assert body["active_provider"] == "bedrock"
+    assert body["bedrock_model"] == "us.anthropic.claude-sonnet-4-6"
 
 
 def test_run_session_reuses_stage2_and_stage3() -> None:
@@ -92,6 +106,31 @@ def test_copilot_ai_sdk_text_stream_shape() -> None:
     assert response["statusCode"] == 200
     assert response["headers"]["Content-Type"].startswith("text/plain")
     assert response["body"] == "Refuse to sign."
+
+
+def test_evidence_report_provider_response_shape() -> None:
+    report = {
+        "report_id": "RPT-1",
+        "session_id": "SES-1",
+        "_usage": {
+            "provider": "bedrock",
+            "model": "us.anthropic.claude-sonnet-4-6",
+        },
+    }
+    with (
+        patch.object(lambda_app, "generate_evidence_report", return_value=report),
+        patch.object(lambda_app, "put_json", return_value="generated-reports/report.json"),
+        patch.object(lambda_app, "store_evidence_report"),
+    ):
+        response = lambda_app.handler(
+            _event("POST", "/api/evidence-report", {"session_id": "SES-1"}),
+            None,
+        )
+
+    body = json.loads(response["body"])
+    assert response["statusCode"] == 200
+    assert body["provider_used"] == "bedrock"
+    assert body["model"] == "us.anthropic.claude-sonnet-4-6"
 
 
 def test_ingest_bdn_stores_file_and_starts_async_worker() -> None:

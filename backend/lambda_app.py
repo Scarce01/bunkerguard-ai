@@ -227,18 +227,32 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
 
     try:
         if method == "GET" and path == "/health":
+            llm_provider = os.environ.get("LLM_PROVIDER", "anthropic").strip().lower()
+            bedrock_configured = bool(
+                llm_provider == "bedrock"
+                and (os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION"))
+                and os.environ.get("BEDROCK_MODEL_ID")
+            )
+            openrouter_configured = bool(os.environ.get("OPENROUTER_API_KEY"))
             return _response(
                 200,
                 {
                     "ok": True,
                     "service": "bunkerguard-ai",
-                    "llm_provider": os.environ.get("LLM_PROVIDER", "anthropic"),
+                    "llm_provider": llm_provider,
                     "region": os.environ.get("AWS_REGION"),
                     "s3_bucket": os.environ.get("S3_BUCKET"),
                     "exa_configured": bool(os.environ.get("EXA_API_KEY")),
-                    "openrouter_configured": bool(
-                        os.environ.get("OPENROUTER_API_KEY")
+                    "bedrock_configured": bedrock_configured,
+                    "openrouter_configured": openrouter_configured,
+                    "active_provider": (
+                        "bedrock"
+                        if bedrock_configured
+                        else "openrouter"
+                        if openrouter_configured
+                        else "unavailable"
                     ),
+                    "bedrock_model": os.environ.get("BEDROCK_MODEL_ID"),
                     "openrouter_model": os.environ.get(
                         "OPENROUTER_MODEL", "anthropic/claude-sonnet-4.6"
                     ),
