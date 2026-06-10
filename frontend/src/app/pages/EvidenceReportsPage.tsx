@@ -1,342 +1,424 @@
-import { useState, useRef, useEffect } from 'react';
-import { SectionPanel } from '../components/dashboard/SectionPanel';
-import { StatusPill } from '../components/dashboard/StatusPill';
-import { mockEvidenceReports } from '../../data/mockEvidence';
-import { FileText, Download, Copy, ChevronRight, Send } from 'lucide-react';
+import { useState } from 'react';
+import { useNavigate } from 'react-router';
+import { FileText, Anchor, Download, Copy, X, RefreshCw, ChevronRight, ExternalLink, AlertTriangle } from 'lucide-react';
+import { useEvidenceReports, type EvidenceReportRow } from '../../lib/useEvidenceReports';
+import { PortCopilot } from '../components/PortCopilot';
 
-/* ─── AI corpus ─────────────────────────────────────────────────── */
-const AI_INV_RESPONSES: Record<string, string> = {
-  default:
-    'Quantity mismatch likely caused by mass flow meter deviation during active transfer. MFM stream shows progressive drift from T+47min, consistent with controlled suppression. Supplier history corroborates pattern.',
-  supplier:
-    'MegaFuel Pte Ltd (Licence MPA-BKR-2024-0042) holds a reputation score of 58/100. Three of six monitored sessions in the past 90 days triggered shortage anomalies. Session #11 resulted in a Letter of Protest. MPA has flagged this supplier for enhanced monitoring.',
-  mismatch:
-    'MFM cumulative reading: 481.2 MT. BDN declared: 500.0 MT. Deviation: 18.8 MT (3.76%). MPA tolerance threshold is 2.0%. Deviation onset at T+47min suggests systematic suppression rather than calibration drift. Rule A02 is triggered at 2% sustained deviation.',
-  history:
-    'Historical analysis across 6 MegaFuel sessions: mean shortage 14.3 MT, mean deviation 2.9%. Session #16 is the highest deviation recorded. Sessions #9, #11, and #14 also exceeded the 2% MPA threshold. The pattern is statistically inconsistent with random measurement error.',
-  evidence:
-    'Evidence chain: BDN-2026-06-10-00016 → MFM stream hash 0xA3F8C2D1...B2C1 → Deviation log R-A02-16 → Blockchain block #4,892,341 on Polygon network. All hashes verified. MFM seal intact. Sample reference: SMP-16-A through SMP-16-D.',
-  protest:
-    'Protest letter should reference: MPA regulation §14.2 (quantity tolerance), MARPOL Annex VI, ISO 8217, BDN reference BDN-2026-06-10-00016. State time of discovery, MFM readings, and formal refusal to countersign. Retain copy within 4 hours of bunkering completion.',
-  action:
-    'Recommended sequence: (1) Do not countersign BDN. (2) Issue Letter of Protest within 4 hours. (3) Notify Chief Officer and Fleet Manager. (4) Retain MFM logs, seal BDN samples A–D. (5) Notify MPA BunkerNet within 24 hours. (6) Escalate to P&I Club if >$50K exposure.',
+/* ── Design tokens shared with the rest of the app ─────────────── */
+const CARD: React.CSSProperties = {
+  background: 'linear-gradient(180deg, #102033 0%, #0E1C2D 100%)',
+  border: '1px solid rgba(255,255,255,0.09)',
+  borderRadius: 8,
+};
+const LABEL: React.CSSProperties = {
+  fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.14em', color: '#5A8AB4', marginBottom: 6,
 };
 
-function getInvResponse(input: string): string {
-  const q = input.toLowerCase();
-  if (q.includes('supplier') || q.includes('megafuel') || q.includes('flagged') || q.includes('reputation')) return AI_INV_RESPONSES.supplier;
-  if (q.includes('mismatch') || q.includes('quantity') || q.includes('shortage') || q.includes('meter')) return AI_INV_RESPONSES.mismatch;
-  if (q.includes('history') || q.includes('historical') || q.includes('compare') || q.includes('previous')) return AI_INV_RESPONSES.history;
-  if (q.includes('evidence') || q.includes('chain') || q.includes('blockchain') || q.includes('hash')) return AI_INV_RESPONSES.evidence;
-  if (q.includes('protest') || q.includes('letter') || q.includes('lop') || q.includes('summary')) return AI_INV_RESPONSES.protest;
-  if (q.includes('action') || q.includes('next') || q.includes('should') || q.includes('officer') || q.includes('do')) return AI_INV_RESPONSES.action;
-  return AI_INV_RESPONSES.default;
+function verdictColor(verdict: string): string {
+  const v = (verdict || '').toUpperCase();
+  if (v.startsWith('REFUSE')) return '#FF5656';
+  if (v.startsWith('SIGN'))   return '#34C98C';
+  if (v.startsWith('REVIEW')) return '#FFA940';
+  return '#7FA5D3';
 }
 
-const CHIPS = [
-  'Why was supplier flagged?',
-  'Explain quantity mismatch',
-  'Compare with historical sessions',
-  'Generate protest summary',
-  'Show evidence chain',
-  'What should officer do next?',
-];
+/* ─────────────────────────────────────────────────────────────────
+ *  Evidence Reports Page — list of stored reports + viewer drawer
+ * ───────────────────────────────────────────────────────────────── */
+export function EvidenceReportsPage() {
+  const { reports, loading, error, refresh } = useEvidenceReports();
+  const [openReport, setOpenReport] = useState<EvidenceReportRow | null>(null);
+  const navigate = useNavigate();
 
-interface InvMessage { role: 'assistant'; text: string; timestamp: string; }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden', position: 'relative' }}>
 
-/* ─── AI Copilot drawer ─────────────────────────────────────────── */
-function AICopilotDrawer({ report }: { report: ReturnType<typeof mockEvidenceReports>[0] }) {
-  const [messages, setMessages] = useState<InvMessage[]>([
-    {
-      role: 'assistant',
-      text: 'Quantity mismatch likely caused by mass flow meter deviation. Supplier history indicates repeated shortage incidents across 3 of 6 recent sessions. Evidence chain is fully verified on-chain.',
-      timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-    },
-  ]);
-  const [input, setInput] = useState('');
-  const [typing, setTyping] = useState(false);
-  const chatEnd = useRef<HTMLDivElement>(null);
+      {/* Header */}
+      <div style={{ padding: '28px 32px 16px', flexShrink: 0, borderBottom: '1px solid rgba(255,255,255,0.08)', background: 'rgba(4,10,20,0.7)' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between' }}>
+          <div>
+            <h1 style={{ fontSize: 24, fontWeight: 700, color: '#EAF4FF', lineHeight: 1, letterSpacing: '-0.02em', margin: 0, marginBottom: 6 }}>Generated Evidence Reports</h1>
+            <div style={{ fontSize: 11, color: '#7FA5D3' }}>
+              Signed, hash-chained packages produced by the 4-agent workflow. Stored in
+              <code style={{ background: 'rgba(46,168,255,0.10)', color: '#2EA8FF', padding: '1px 5px', borderRadius: 3, marginLeft: 5 }}>public.evidence_reports</code>.
+            </div>
+          </div>
+          <button
+            onClick={refresh}
+            disabled={loading}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6, padding: '7px 13px',
+              borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: loading ? 'wait' : 'pointer',
+              background: 'rgba(46,168,255,0.10)', border: '1px solid rgba(46,168,255,0.30)', color: '#2EA8FF',
+            }}>
+            <RefreshCw className="w-3 h-3" style={{ animation: loading ? 'spin 1s linear infinite' : undefined }} />
+            Refresh
+          </button>
+        </div>
+      </div>
 
-  useEffect(() => { chatEnd.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+      {/* Content */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '20px 32px' }}>
+        {loading && reports.length === 0 && (
+          <div style={{ color: '#7FA5D3', fontSize: 12 }}>Loading reports…</div>
+        )}
 
-  function send(text: string) {
-    if (!text.trim()) return;
-    setInput('');
-    setTyping(true);
-    setTimeout(() => {
-      setMessages(prev => [...prev, { role: 'assistant', text: getInvResponse(text), timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) }]);
-      setTyping(false);
-    }, 780);
+        {error && (
+          <div style={{ ...CARD, padding: '14px 18px', borderColor: 'rgba(255,86,86,0.4)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#FF5656', fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
+              <AlertTriangle className="w-4 h-4" /> Failed to load reports
+            </div>
+            <div style={{ fontSize: 11, color: '#D8E8F8', lineHeight: 1.5, fontFamily: "'JetBrains Mono', monospace" }}>{error}</div>
+            <div style={{ fontSize: 11, color: '#7FA5D3', marginTop: 10, lineHeight: 1.5 }}>
+              The <code>evidence_reports</code> table may not exist yet. Run the migration in Supabase Studio:
+              <code style={{ display: 'block', marginTop: 6, padding: '6px 8px', background: 'rgba(4,10,18,0.7)', borderRadius: 4, color: '#BFD7F7' }}>frontend/supabase/migrations/20260610_evidence_reports.sql</code>
+            </div>
+          </div>
+        )}
+
+        {!loading && !error && reports.length === 0 && (
+          <div style={{ ...CARD, padding: '36px 28px', textAlign: 'center' }}>
+            <FileText style={{ width: 36, height: 36, color: '#5A8AB4', margin: '0 auto 14px' }} />
+            <div style={{ fontSize: 14, fontWeight: 700, color: '#EAF4FF', marginBottom: 6 }}>No reports yet</div>
+            <div style={{ fontSize: 11, color: '#7FA5D3', marginBottom: 14, maxWidth: 480, marginLeft: 'auto', marginRight: 'auto', lineHeight: 1.5 }}>
+              Open a session and click <strong style={{ color: '#2EA8FF' }}>Generate Evidence Report</strong> — once the Python pipeline finishes,
+              the new row will land here.
+            </div>
+            <button
+              onClick={() => navigate('/sessions')}
+              style={{
+                padding: '8px 16px', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                background: 'rgba(46,168,255,0.14)', border: '1px solid rgba(46,168,255,0.32)', color: '#2EA8FF',
+              }}>
+              Browse sessions →
+            </button>
+          </div>
+        )}
+
+        {reports.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {reports.map((r) => {
+              const v = r.sign_off_status;
+              const vc = verdictColor(v);
+              const score = r.report_json?.risk_assessment?.final_score ?? '—';
+              const cat   = r.report_json?.risk_assessment?.risk_category ?? '—';
+              const vessel = r.report_json?.header?.vessel_name ?? '—';
+              const supplier = r.report_json?.header?.supplier_name ?? '—';
+              const impact = r.report_json?.quantity_comparison?.financial_impact_usd;
+              const dev = r.report_json?.quantity_comparison?.discrepancy_pct;
+              return (
+                <div
+                  key={r.report_id}
+                  onClick={() => setOpenReport(r)}
+                  style={{
+                    ...CARD,
+                    padding: '14px 18px',
+                    cursor: 'pointer',
+                    transition: 'all 140ms',
+                    display: 'grid',
+                    gridTemplateColumns: '1.5fr 1fr 1fr 100px 90px 36px',
+                    gap: 16,
+                    alignItems: 'center',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'rgba(46,168,255,0.35)'; e.currentTarget.style.background = 'rgba(46,168,255,0.04)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.09)'; e.currentTarget.style.background = 'linear-gradient(180deg, #102033 0%, #0E1C2D 100%)' as any; }}
+                >
+                  {/* Session + vessel */}
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#EAF4FF' }}>{r.session_id}</div>
+                    <div style={{ fontSize: 10, color: '#7FA5D3', marginTop: 2 }}>{vessel}</div>
+                  </div>
+                  {/* Supplier */}
+                  <div>
+                    <div style={LABEL}>Supplier</div>
+                    <div style={{ fontSize: 11, color: '#BFD7F7', fontWeight: 600 }}>{supplier}</div>
+                  </div>
+                  {/* Risk score + category */}
+                  <div>
+                    <div style={LABEL}>Risk</div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                      <span style={{ fontSize: 16, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: vc }}>{score}</span>
+                      <span style={{ fontSize: 9, color: '#7FA5D3' }}>/ 100</span>
+                      <span style={{ fontSize: 9, fontWeight: 700, color: vc, marginLeft: 4 }}>{cat}</span>
+                    </div>
+                  </div>
+                  {/* Impact */}
+                  <div>
+                    <div style={LABEL}>Impact</div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: impact ? '#FF5656' : '#7FA5D3', fontFamily: "'JetBrains Mono', monospace" }}>
+                      {impact ? `$${Number(impact).toLocaleString()}` : '—'}
+                    </div>
+                    {dev != null && (
+                      <div style={{ fontSize: 9, color: '#7FA5D3' }}>{Number(dev).toFixed(2)}%</div>
+                    )}
+                  </div>
+                  {/* Verdict pill */}
+                  <div>
+                    <span style={{
+                      display: 'inline-block', padding: '4px 8px', borderRadius: 4,
+                      fontSize: 9, fontWeight: 800, color: vc,
+                      background: `${vc}1A`, border: `1px solid ${vc}50`,
+                      letterSpacing: '0.05em', whiteSpace: 'nowrap',
+                    }}>{v.replace(/_/g, ' ')}</span>
+                    <div style={{ fontSize: 9, color: '#5A8AB4', marginTop: 4, fontFamily: "'JetBrains Mono', monospace" }}>
+                      {new Date(r.generated_at).toLocaleDateString()}
+                    </div>
+                  </div>
+                  {/* Open arrow */}
+                  <ChevronRight style={{ width: 18, height: 18, color: '#5A8AB4', justifySelf: 'end' }} />
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <PortCopilot />
+
+      {/* Viewer drawer */}
+      {openReport && <EvidenceReportViewer report={openReport} onClose={() => setOpenReport(null)} />}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────
+ *  Viewer drawer — read-only render of a stored report. Mirrors the
+ *  generation drawer's layout but skips the 6-step pipeline since the
+ *  report is already finalised + hashed.
+ * ───────────────────────────────────────────────────────────────── */
+function EvidenceReportViewer({ report, onClose }: { report: EvidenceReportRow; onClose: () => void }) {
+  const r = report.report_json ?? {};
+  const vc = verdictColor(report.sign_off_status);
+  const hash = report.report_hash ?? r.report_hash ?? '';
+  const tx = report.anchor_tx ?? '';
+
+  const downloadJson = () => {
+    const blob = new Blob([JSON.stringify(r, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `${report.report_id}.json`; a.click();
+    URL.revokeObjectURL(url);
+  };
+  const copy = (s: string) => navigator.clipboard?.writeText(s).catch(() => {});
+
+  // Close on Esc
+  if (typeof window !== 'undefined') {
+    window.onkeydown = (e: any) => { if (e.key === 'Escape') onClose(); };
   }
 
   return (
-    <div style={{ width: 340, flexShrink: 0, borderLeft: '1px solid rgba(255,255,255,0.06)', background: 'rgba(9,23,40,0.97)', display: 'flex', flexDirection: 'column', height: '100%' }}>
-
+    <div
+      style={{
+        position: 'fixed', top: 0, right: 0, bottom: 0,
+        width: 'min(680px, 95vw)', zIndex: 80,
+        background: 'rgba(10,23,38,0.94)',
+        backdropFilter: 'blur(22px) saturate(140%)',
+        borderLeft: '1px solid rgba(46,168,255,0.32)',
+        boxShadow: '-10px 0 40px rgba(0,0,0,0.55)',
+        display: 'flex', flexDirection: 'column',
+        animation: 'copilotSlideIn 220ms ease-out',
+        overflow: 'hidden',
+      }}>
       {/* Header */}
-      <div style={{ padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.06)', flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#2EA8FF', boxShadow: '0 0 6px rgba(46,168,255,0.5)', animation: 'livePulse 3s ease-in-out infinite' }} />
-            <span style={{ fontSize: 12, fontWeight: 700, color: '#EEF3F8' }}>AI Investigation Copilot</span>
-          </div>
-          <span style={{ fontSize: 9, padding: '2px 7px', borderRadius: 4, background: 'rgba(255,90,90,0.1)', border: '1px solid rgba(255,90,90,0.2)', color: '#FF5A5A', fontWeight: 700 }}>92% conf.</span>
+      <div style={{ padding: '16px 20px', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ width: 34, height: 34, borderRadius: 8, background: 'linear-gradient(135deg, rgba(46,168,255,0.22), rgba(0,217,142,0.22))', border: '1px solid rgba(46,168,255,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Anchor style={{ width: 17, height: 17, color: '#2EA8FF' }} />
         </div>
-        <div style={{ fontSize: 10, color: '#4E6D8C' }}>Session #{report.session.sessionNumber} · {report.session.vesselName}</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: '#EAF4FF', letterSpacing: '0.05em' }}>EVIDENCE REPORT</div>
+          <div style={{ fontSize: 10, color: '#7FA5D3', fontFamily: "'JetBrains Mono', monospace", marginTop: 2 }}>
+            {report.session_id} · {hash ? `hash ${hash.slice(0, 18)}…` : 'unhashed'}
+          </div>
+        </div>
+        <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: '#7FA5D3', cursor: 'pointer', padding: 6 }}>
+          <X className="w-5 h-5" />
+        </button>
       </div>
 
-      {/* AI summary card — compact */}
-      <div style={{ padding: '10px 16px', borderBottom: '1px solid rgba(255,255,255,0.05)', flexShrink: 0 }}>
-        <div style={{ padding: '10px 12px', borderRadius: 8, background: 'rgba(7,20,35,0.7)', border: '1px solid rgba(255,255,255,0.06)' }}>
-          <div style={{ fontSize: 9, color: '#4E6D8C', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6, fontWeight: 700 }}>AI Summary</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {[
-              { label: 'Deviation', value: `${report.session.mismatchMT.toFixed(1)} MT (${report.session.mismatchPercent.toFixed(2)}%)` },
-              { label: 'Rule triggered', value: 'A02 · MFM suppression' },
-              { label: 'Supplier score', value: '58/100 — Enhanced monitoring' },
-              { label: 'Blockchain', value: '✓ Block #4,892,341 verified' },
-            ].map(row => (
-              <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10 }}>
-                <span style={{ color: '#6B88A8' }}>{row.label}</span>
-                <span style={{ color: row.label === 'Blockchain' ? '#00D47E' : '#C9D4E0', fontWeight: 600 }}>{row.value}</span>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {/* Verdict */}
+        <div style={{ padding: '14px 16px', borderRadius: 8, background: `${vc}10`, border: `1px solid ${vc}50` }}>
+          <div style={LABEL}>Sign-off Status</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: vc, letterSpacing: '-0.02em' }}>
+            {(report.sign_off_status || '').replace(/_/g, ' ')}
+          </div>
+          {r.risk_assessment && (
+            <div style={{ fontSize: 11, color: '#BFD7F7', marginTop: 6 }}>
+              Final risk score <strong style={{ color: vc }}>{r.risk_assessment.final_score} / 100</strong>
+              {' · '}{r.risk_assessment.risk_category}
+              {r.risk_assessment.recommended_verdict && <> · verdict <strong>{r.risk_assessment.recommended_verdict.replace(/_/g, ' ')}</strong></>}
+            </div>
+          )}
+        </div>
+
+        {/* Header / quantity */}
+        {(r.header || r.quantity_comparison) && (
+          <div style={{ ...CARD, padding: '14px 16px' }}>
+            <div style={LABEL}>Delivery</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 11 }}>
+              {r.header?.vessel_name      && <Field label="Vessel"   value={r.header.vessel_name} />}
+              {r.header?.supplier_name    && <Field label="Supplier" value={r.header.supplier_name} />}
+              {r.header?.barge_name       && <Field label="Barge"    value={r.header.barge_name} />}
+              {r.header?.port             && <Field label="Port"     value={r.header.port} />}
+              {r.header?.fuel_grade       && <Field label="Fuel"     value={r.header.fuel_grade} />}
+              {r.header?.bdn_reference    && <Field label="BDN"      value={r.header.bdn_reference} mono />}
+              {r.quantity_comparison?.bdn_declared_mt != null && (
+                <Field label="BDN qty"      value={`${r.quantity_comparison.bdn_declared_mt} MT`} mono />
+              )}
+              {r.quantity_comparison?.mfm_measured_mt != null && (
+                <Field label="MFM measured" value={`${r.quantity_comparison.mfm_measured_mt} MT`} mono />
+              )}
+              {r.quantity_comparison?.discrepancy_mt != null && (
+                <Field label="Discrepancy" value={`${r.quantity_comparison.discrepancy_mt} MT (${r.quantity_comparison.discrepancy_pct?.toFixed?.(2) ?? r.quantity_comparison.discrepancy_pct}%)`}  warn mono />
+              )}
+              {r.quantity_comparison?.financial_impact_usd != null && (
+                <Field label="Impact (USD)" value={`$${Number(r.quantity_comparison.financial_impact_usd).toLocaleString()}`} warn mono />
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* AI Narrative */}
+        {r.ai_narrative && (
+          <div style={{ ...CARD, padding: '14px 16px' }}>
+            <div style={LABEL}>AI Narrative</div>
+            <div style={{ fontSize: 12, color: '#D8E8F8', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{r.ai_narrative}</div>
+          </div>
+        )}
+
+        {/* Recommended Actions */}
+        {Array.isArray(r.recommended_actions) && r.recommended_actions.length > 0 && (
+          <div style={{ ...CARD, padding: '14px 16px' }}>
+            <div style={LABEL}>Recommended Actions</div>
+            <ol style={{ paddingLeft: 18, margin: 0, color: '#D8E8F8', fontSize: 12, lineHeight: 1.55, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {r.recommended_actions.map((a: string, i: number) => (
+                <li key={i}>{a.replace(/^\d+\.\s*/, '')}</li>
+              ))}
+            </ol>
+          </div>
+        )}
+
+        {/* Anomaly summary */}
+        {r.anomaly_summary && (
+          <div style={{ ...CARD, padding: '14px 16px' }}>
+            <div style={LABEL}>Anomalies</div>
+            <div style={{ fontSize: 11, color: '#BFD7F7' }}>
+              {r.anomaly_summary.total_anomalies} total
+              {' · '}<span style={{ color: '#FF5656', fontWeight: 700 }}>{r.anomaly_summary.critical_count} critical</span>
+              {' · '}<span style={{ color: '#FFA940', fontWeight: 700 }}>{r.anomaly_summary.high_count} high</span>
+            </div>
+            {Array.isArray(r.anomaly_summary.anomalies) && r.anomaly_summary.anomalies.length > 0 && (
+              <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {r.anomaly_summary.anomalies.map((a: any, i: number) => (
+                  <div key={i} style={{ padding: '8px 10px', borderRadius: 6, background: 'rgba(4,10,18,0.55)', border: '1px solid rgba(255,255,255,0.06)', borderLeft: `3px solid ${a.severity === 'CRITICAL' ? '#FF5656' : '#FFA940'}` }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#EAF4FF', marginBottom: 2 }}>{a.rule_id} · {a.rule_name}</div>
+                    <div style={{ fontSize: 10, color: '#7FA5D3', lineHeight: 1.5 }}>{a.description}</div>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
-        </div>
-      </div>
+        )}
 
-      {/* Prompt chips — compact 2-col grid */}
-      <div style={{ padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.05)', flexShrink: 0 }}>
-        <div style={{ fontSize: 9, color: '#4E6D8C', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 700, marginBottom: 7 }}>Suggested Queries</div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
-          {CHIPS.map(chip => (
-            <button
-              key={chip}
-              onClick={() => send(chip)}
-              style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 8px', borderRadius: 5, cursor: 'pointer', background: 'rgba(7,20,35,0.5)', border: '1px solid rgba(255,255,255,0.06)', textAlign: 'left', transition: 'all 150ms', width: '100%' }}
-            >
-              <ChevronRight style={{ width: 9, height: 9, color: '#2EA8FF', flexShrink: 0 }} />
-              <span style={{ fontSize: 10, color: '#C9D4E0', lineHeight: 1.3 }}>{chip}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Conversation */}
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {messages.map((msg, i) => (
-          <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#3DA8FF', opacity: 0.7 }} />
-              <span style={{ fontSize: 9, fontWeight: 700, color: '#3DA8FF', textTransform: 'uppercase', letterSpacing: '0.09em' }}>Copilot</span>
-              <span style={{ fontSize: 9, color: '#7A96B8', marginLeft: 'auto' }}>{msg.timestamp}</span>
+        {/* Letter of Protest */}
+        {r.lop_draft && (
+          <div style={{ ...CARD, padding: '14px 16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <div style={LABEL}>Letter of Protest (Draft)</div>
+              <button
+                onClick={() => copy(r.lop_draft)}
+                style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 9px', borderRadius: 4, fontSize: 10, fontWeight: 700, cursor: 'pointer', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.10)', color: '#BFD7F7' }}>
+                <Copy className="w-3 h-3" /> Copy
+              </button>
             </div>
-            <div style={{ padding: '10px 13px', borderRadius: 8, background: 'rgba(7,20,35,0.6)', border: '1px solid rgba(255,255,255,0.05)' }}>
-              <p style={{ fontSize: 12, color: '#CBD5E1', lineHeight: 1.6, margin: 0 }}>{msg.text}</p>
-            </div>
+            <pre style={{
+              margin: 0, padding: '12px 14px', borderRadius: 6,
+              background: 'rgba(4,10,18,0.7)', border: '1px solid rgba(255,255,255,0.06)',
+              fontSize: 11, lineHeight: 1.6, color: '#BFD7F7',
+              maxHeight: 320, overflowY: 'auto', whiteSpace: 'pre-wrap',
+              fontFamily: "'JetBrains Mono', monospace",
+            }}>{r.lop_draft}</pre>
           </div>
-        ))}
-        {typing && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#3DA8FF', opacity: 0.7 }} />
-              <span style={{ fontSize: 9, fontWeight: 700, color: '#3DA8FF', textTransform: 'uppercase', letterSpacing: '0.09em' }}>Copilot</span>
-            </div>
-            <div style={{ padding: '10px 13px', borderRadius: 8, background: 'rgba(7,20,35,0.6)', border: '1px solid rgba(255,255,255,0.05)', display: 'flex', gap: 5, alignItems: 'center' }}>
-              {[0, 1, 2].map(n => (
-                <div key={n} style={{ width: 5, height: 5, borderRadius: '50%', background: '#3DA8FF', opacity: 0.5, animation: `livePulse 1.2s ease-in-out ${n * 0.2}s infinite` }} />
+        )}
+
+        {/* Compliance flags */}
+        {r.compliance_flags && (
+          <div style={{ ...CARD, padding: '14px 16px' }}>
+            <div style={LABEL}>Compliance Flags</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              {Object.entries(r.compliance_flags).map(([k, v]) => (
+                <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: '#BFD7F7' }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: v ? '#34C98C' : '#FF5656' }} />
+                  <span>{k.replace(/_/g, ' ')}</span>
+                </div>
               ))}
             </div>
           </div>
         )}
-        <div ref={chatEnd} />
+
+        {/* Anchor / hash */}
+        <div style={{ ...CARD, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={LABEL}>Cryptographic Anchor</div>
+          {hash && (
+            <FieldCopy label="SHA-256 hash" value={hash} onCopy={() => copy(hash)} />
+          )}
+          {tx && (
+            <FieldCopy
+              label="Ethereum tx"
+              value={tx}
+              onCopy={() => copy(tx)}
+              extra={
+                <a href={`https://etherscan.io/tx/${tx}`} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 9, color: '#2EA8FF', textDecoration: 'none' }}>
+                  Etherscan <ExternalLink className="w-3 h-3" />
+                </a>
+              }
+            />
+          )}
+          {report.generated_at && (
+            <div style={{ fontSize: 10, color: '#7FA5D3' }}>Generated {new Date(report.generated_at).toLocaleString()}</div>
+          )}
+        </div>
       </div>
 
-      {/* Enterprise prompt field */}
-      <div style={{ padding: '12px 16px', borderTop: '1px solid rgba(255,255,255,0.06)', flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 8, background: 'rgba(7,20,35,0.7)', border: '1px solid rgba(255,255,255,0.08)' }}>
-          <input
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && send(input)}
-            placeholder="Ask Copilot..."
-            style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', fontSize: 12, color: '#F1F5F9', caretColor: '#3DA8FF' }}
-          />
-          <button
-            onClick={() => send(input)}
-            disabled={!input.trim()}
-            style={{ width: 28, height: 28, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: input.trim() ? 'pointer' : 'default', background: input.trim() ? 'rgba(61,168,255,0.15)' : 'transparent', border: '1px solid rgba(61,168,255,0.15)', transition: 'all 150ms' }}
-          >
-            <Send style={{ width: 12, height: 12, color: input.trim() ? '#3DA8FF' : '#7A96B8' }} />
-          </button>
-        </div>
+      {/* Footer */}
+      <div style={{ padding: '12px 20px', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', gap: 10 }}>
+        <button onClick={downloadJson} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '9px 14px', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer', background: 'rgba(46,168,255,0.14)', border: '1px solid rgba(46,168,255,0.32)', color: '#2EA8FF' }}>
+          <Download className="w-4 h-4" /> Download JSON
+        </button>
+        <button onClick={() => copy(hash)} disabled={!hash} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '9px 14px', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: hash ? 'pointer' : 'not-allowed', opacity: hash ? 1 : 0.5, background: 'rgba(0,217,142,0.10)', border: '1px solid rgba(0,217,142,0.32)', color: '#34C98C' }}>
+          <Copy className="w-4 h-4" /> Copy hash
+        </button>
+        <button onClick={() => copy(tx)} disabled={!tx} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '9px 14px', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: tx ? 'pointer' : 'not-allowed', opacity: tx ? 1 : 0.5, background: 'rgba(163,108,255,0.12)', border: '1px solid rgba(163,108,255,0.32)', color: '#A36CFF' }}>
+          <Copy className="w-4 h-4" /> Copy tx
+        </button>
       </div>
     </div>
   );
 }
 
-/* ─── Main page ─────────────────────────────────────────────────── */
-export function EvidenceReportsPage() {
-  const report = mockEvidenceReports[0];
-
+function Field({ label, value, warn, mono }: { label: string; value: React.ReactNode; warn?: boolean; mono?: boolean }) {
   return (
-    <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
+    <div>
+      <div style={{ fontSize: 9, color: '#5A8AB4', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 700, marginBottom: 2 }}>{label}</div>
+      <div style={{
+        fontSize: 11, color: warn ? '#FF5656' : '#D8E8F8', fontWeight: warn ? 700 : 500,
+        fontFamily: mono ? "'JetBrains Mono', monospace" : undefined,
+      }}>{value}</div>
+    </div>
+  );
+}
 
-      {/* Main content — scrollable */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: 24, display: 'flex', flexDirection: 'column', gap: 24 }}>
-        {/* Page header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div>
-            <h1 style={{ fontSize: 22, fontWeight: 700, color: '#F1F5F9', marginBottom: 4 }}>Evidence Reports</h1>
-            <p style={{ fontSize: 13, color: '#7A96B8' }}>Generated evidence documentation</p>
-          </div>
-          <button style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 16px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', background: 'rgba(61,168,255,0.12)', border: '1px solid rgba(61,168,255,0.24)', color: '#3DA8FF', transition: 'all 150ms' }}>
-            <FileText style={{ width: 14, height: 14 }} />
-            Generate New Report
-          </button>
-        </div>
-
-        {report && (
-          <SectionPanel title={`Evidence Report — Session #${report.session.sessionNumber}`}>
-            <div className="space-y-6">
-              {/* Header */}
-              <div className="grid grid-cols-3 gap-6 pb-6 border-b border-border">
-                <div>
-                  <div className="text-xs text-foreground-muted mb-1">GENERATED</div>
-                  <div className="text-sm text-foreground">{new Date(report.generatedAt).toLocaleString()}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-foreground-muted mb-1">SESSION ID</div>
-                  <div className="font-mono text-sm text-foreground">#{report.sessionId}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-foreground-muted mb-1">STATUS</div>
-                  <StatusPill status={report.session.verdict} size="sm" />
-                </div>
-              </div>
-
-              {/* BDN Summary */}
-              <div>
-                <h3 className="text-base font-semibold text-foreground mb-4">BDN Summary</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  {[
-                    { label: 'BDN Reference', value: report.session.bdnRecord.reference },
-                    { label: 'Vessel Name', value: report.session.bdnRecord.vesselName },
-                    { label: 'Vessel IMO', value: report.session.bdnRecord.vesselIMO },
-                    { label: 'Supplier', value: report.session.bdnRecord.supplierName },
-                    { label: 'Supplier Licence', value: report.session.bdnRecord.supplierLicence },
-                    { label: 'Barge Name', value: report.session.bdnRecord.bargeName },
-                    { label: 'Barge IMO', value: report.session.bdnRecord.bargeIMO },
-                    { label: 'Port', value: report.session.bdnRecord.port },
-                    { label: 'Product Grade', value: report.session.bdnRecord.productGrade },
-                    { label: 'Sulphur %', value: report.session.bdnRecord.sulphurPercent },
-                    { label: 'Density @ 15°C', value: report.session.bdnRecord.density15C },
-                    { label: 'Flash Point', value: `${report.session.bdnRecord.flashPoint}°C` },
-                    { label: 'Quantity', value: `${report.session.bdnRecord.quantityMT} MT` },
-                    { label: 'Sample Seal', value: report.session.bdnRecord.sampleSeal },
-                    { label: 'Validation', value: report.session.bdnRecord.validationStatus },
-                  ].map((item) => (
-                    <div key={item.label} className="flex justify-between py-2 border-b border-border">
-                      <span className="text-sm text-foreground-muted">{item.label}</span>
-                      <span className="text-sm font-medium text-foreground">{item.value}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Quantity Comparison */}
-              <div>
-                <h3 className="text-base font-semibold text-foreground mb-4">Quantity Comparison</h3>
-                <div className="bg-background-secondary border border-border rounded-lg overflow-hidden">
-                  <table className="w-full">
-                    <thead className="border-b border-border">
-                      <tr className="text-left text-xs text-foreground-muted uppercase">
-                        <th className="px-4 py-3">Source</th>
-                        <th className="px-4 py-3 text-right">Quantity (MT)</th>
-                        <th className="px-4 py-3 text-right">Difference</th>
-                        <th className="px-4 py-3">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border">
-                      <tr>
-                        <td className="px-4 py-3 text-sm text-foreground">BDN Declared</td>
-                        <td className="px-4 py-3 text-right text-sm font-semibold text-foreground">{report.session.bdnQuantity.toFixed(1)}</td>
-                        <td className="px-4 py-3 text-right text-sm text-foreground-muted">—</td>
-                        <td className="px-4 py-3"><StatusPill status="MISMATCH" size="sm" /></td>
-                      </tr>
-                      <tr>
-                        <td className="px-4 py-3 text-sm text-foreground">MFM Recorded</td>
-                        <td className="px-4 py-3 text-right text-sm font-semibold text-foreground">{report.session.mfmQuantity.toFixed(1)}</td>
-                        <td className="px-4 py-3 text-right text-sm font-semibold text-critical">
-                          −{report.session.mismatchMT.toFixed(1)} ({report.session.mismatchPercent.toFixed(2)}%)
-                        </td>
-                        <td className="px-4 py-3"><StatusPill status="CRITICAL" size="sm" /></td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* AI Analysis */}
-              <div>
-                <h3 className="text-base font-semibold text-foreground mb-4">AI Analysis</h3>
-                <div className="space-y-4">
-                  <div className="p-4 bg-background-secondary border border-border rounded-lg">
-                    <div className="text-xs text-foreground-muted mb-2">SUMMARY</div>
-                    <div className="text-sm text-foreground">{report.aiAnalysis.summary}</div>
-                  </div>
-                  <div className="p-4 bg-background-secondary border border-border rounded-lg">
-                    <div className="text-xs text-foreground-muted mb-2">SPECIFIC CONCERNS</div>
-                    <ul className="space-y-2">
-                      {report.aiAnalysis.concerns.map((concern, i) => (
-                        <li key={i} className="text-sm text-foreground flex items-start gap-2">
-                          <span className="text-critical">•</span>
-                          <span>{concern}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                  <div className="p-4 bg-critical/10 border border-critical/20 rounded-lg">
-                    <div className="text-xs text-foreground-muted mb-2">RECOMMENDATION</div>
-                    <div className="text-sm font-semibold text-critical mb-2">{report.aiAnalysis.recommendation}</div>
-                    <div className="text-xs text-critical/90">Confidence: {report.aiAnalysis.confidence}%</div>
-                  </div>
-                </div>
-              </div>
-
-              {/* LoP Draft */}
-              <div>
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-base font-semibold text-foreground">Letter of Protest Draft</h3>
-                  <div className="flex gap-2">
-                    <button className="flex items-center gap-2 px-3 py-1.5 bg-background-secondary border border-border rounded-lg text-sm hover:bg-surface-secondary transition-colors">
-                      <Copy className="w-4 h-4" />Copy
-                    </button>
-                    <button className="flex items-center gap-2 px-3 py-1.5 bg-background-secondary border border-border rounded-lg text-sm hover:bg-surface-secondary transition-colors">
-                      <Download className="w-4 h-4" />Download
-                    </button>
-                  </div>
-                </div>
-                <div className="p-6 bg-background-secondary border border-border rounded-lg">
-                  <pre className="text-xs text-foreground-secondary whitespace-pre-wrap font-mono">{report.lopDraft}</pre>
-                </div>
-              </div>
-
-              {/* Actions */}
-              <div className="flex gap-3 pt-6 border-t border-border">
-                <button className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors">
-                  <Download className="w-4 h-4" />Download PDF
-                </button>
-                <button className="flex items-center gap-2 px-4 py-2 bg-background-secondary border border-border rounded-lg hover:bg-surface-secondary transition-colors">
-                  <Copy className="w-4 h-4" />Copy Summary
-                </button>
-              </div>
-            </div>
-          </SectionPanel>
-        )}
+function FieldCopy({ label, value, onCopy, extra }: { label: string; value: string; onCopy: () => void; extra?: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 9, color: '#5A8AB4', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 700, marginBottom: 1 }}>{label}</div>
+        <div style={{ fontSize: 10, color: '#BFD7F7', fontFamily: "'JetBrains Mono', monospace", wordBreak: 'break-all' }}>{value}</div>
       </div>
-
-      {/* Right: AI Investigation Copilot drawer */}
-      {report && <AICopilotDrawer report={report} />}
+      {extra}
+      <button onClick={onCopy} style={{ background: 'transparent', border: 'none', color: '#7FA5D3', cursor: 'pointer', padding: 4 }}>
+        <Copy className="w-3.5 h-3.5" />
+      </button>
     </div>
   );
 }

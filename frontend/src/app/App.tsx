@@ -6,6 +6,7 @@ import { SessionsPage } from './pages/SessionsPage';
 import { SessionDetailPage } from './pages/SessionDetailPage';
 import { IntelligencePage } from './pages/IntelligencePage';
 import { EvidenceCenterPage } from './pages/EvidenceCenterPage';
+import { EvidenceReportsPage } from './pages/EvidenceReportsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AnomalyMonitorPage } from './pages/AnomalyMonitorPage';
 import { BlockchainPage } from './pages/BlockchainPage';
@@ -22,6 +23,7 @@ export default function App() {
           <Route path="/sessions/:sessionId" element={<SessionDetailPage />} />
           <Route path="/intelligence" element={<IntelligencePage />} />
           <Route path="/evidence" element={<EvidenceCenterPage />} />
+          <Route path="/reports" element={<EvidenceReportsPage />} />
           <Route path="/anomalies" element={<AnomalyMonitorPage />} />
           <Route path="/blockchain" element={<BlockchainPage />} />
           <Route path="/suppliers" element={<SupplierReputationPage />} />

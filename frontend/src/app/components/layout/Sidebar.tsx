@@ -9,6 +9,7 @@ import {
   AlertTriangle,
   Link2,
   Users,
+  FileText,
 } from 'lucide-react';
 
 const navigationItems = [
@@ -19,6 +20,7 @@ const navigationItems = [
   { path: '/intelligence', label: 'Intelligence',    icon: BarChart2 },
   { path: '/suppliers',    label: 'Suppliers',       icon: Users },
   { path: '/evidence',     label: 'Evidence Center', icon: Shield },
+  { path: '/reports',      label: 'Reports',         icon: FileText },
   { path: '/blockchain',   label: 'Blockchain',      icon: Link2 },
   { path: '/settings',     label: 'Settings',        icon: Settings },
 ];

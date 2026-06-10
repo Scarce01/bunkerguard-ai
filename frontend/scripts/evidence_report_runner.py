@@ -70,7 +70,7 @@ def main() -> int:
         store_error = None
         try:
             bundle_id = report.get("report_id", session_id)
-            store_evidence_report(report, bundle_id)
+            store_evidence_report(report, bundle_id, anchor_tx=anchor_tx)
         except Exception as e:  # noqa: BLE001
             store_error = str(e)
 

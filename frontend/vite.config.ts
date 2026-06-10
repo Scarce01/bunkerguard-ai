@@ -45,12 +45,16 @@ function figmaAssetResolver() {
 }
 
 /**
- * Serve oversized terminal models from D:\bunker_t7 under /models/.
- * C:\ ran out of space mid-export for Terminal 7, so its .glb lives on D:.
- * Path is checked safely (basename only) to prevent traversal.
+ * Serve terminal GLB models under /models/ from a configurable directory.
+ * Vite already serves files from `public/` at the root, so this middleware
+ * is now an optional fallback for development setups that keep oversized
+ * GLBs outside the repo (e.g. when the clone is on a small partition).
+ *
+ * Set MODELS_DIR in .env.local to override the default. Path safety:
+ * basename only — no traversal possible.
  */
 function externalModelServer() {
-  const externalDir = 'D:/bunker_t7'
+  const externalDir = process.env.MODELS_DIR || path.resolve(__dirname, 'public/models')
   return {
     name: 'external-models',
     configureServer(server) {

@@ -227,8 +227,12 @@ def generate_evidence_report(session_id: str) -> dict:
     return report
 
 
-def store_evidence_report(report: dict, bundle_id: str) -> None:
-    """Upsert the final report (with hash) to Supabase `evidence_reports`."""
+def store_evidence_report(report: dict, bundle_id: str, anchor_tx: str | None = None) -> None:
+    """Upsert the final report (with hash + anchor) to Supabase `evidence_reports`.
+
+    `anchor_tx` is the mocked Ethereum tx hash from the runner — see the
+    `frontend/scripts/evidence_report_runner.py` for how it's computed. Kept
+    optional so older callers don't break."""
     sb = _get_supabase()
     res = sb.table("evidence_reports").upsert({
         "report_id": report["report_id"],
@@ -238,6 +242,7 @@ def store_evidence_report(report: dict, bundle_id: str) -> None:
         "sign_off_status": report["sign_off_status"],
         "report_hash": report.get("report_hash"),
         "signing_bundle_id": bundle_id,
+        "anchor_tx": anchor_tx,
     }).execute()
     if getattr(res, "error", None):
         raise RuntimeError(f"Failed to store evidence report: {res.error}")
