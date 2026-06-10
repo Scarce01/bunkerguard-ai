@@ -245,13 +245,16 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
                     "exa_configured": bool(os.environ.get("EXA_API_KEY")),
                     "bedrock_configured": bedrock_configured,
                     "openrouter_configured": openrouter_configured,
-                    "active_provider": "bedrock_with_openrouter_fallback"
-                    if bedrock_configured and openrouter_configured
-                    else "bedrock"
-                    if bedrock_configured
-                    else "openrouter"
-                    if openrouter_configured
-                    else "unavailable",
+                    "active_provider": os.environ.get(
+                        "ACTIVE_PROVIDER",
+                        "bedrock_with_openrouter_fallback"
+                        if bedrock_configured and openrouter_configured
+                        else "bedrock"
+                        if bedrock_configured
+                        else "openrouter"
+                        if openrouter_configured
+                        else "unavailable",
+                    ),
                     "bedrock_model": os.environ.get("BEDROCK_MODEL_ID"),
                     "openrouter_model": os.environ.get(
                         "OPENROUTER_MODEL", "anthropic/claude-sonnet-4.6"

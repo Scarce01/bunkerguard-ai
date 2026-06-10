@@ -75,6 +75,7 @@ AWS_DEFAULT_REGION="$REGION" aws cloudformation deploy \
     "AnthropicApiKey=${ANTHROPIC_API_KEY:-}" \
     "OpenRouterApiKey=${OPENROUTER_API_KEY:-}" \
     "OpenRouterModel=${OPENROUTER_MODEL:-anthropic/claude-sonnet-4.6}" \
+    "ActiveProvider=${ACTIVE_PROVIDER:-bedrock_with_openrouter_fallback}" \
     "CorsOrigin=${CORS_ORIGIN:-https://bunkerguard-ai.vercel.app}"
 
 AWS_DEFAULT_REGION="$REGION" aws cloudformation describe-stacks \

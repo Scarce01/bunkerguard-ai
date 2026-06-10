@@ -26,6 +26,7 @@ def test_health() -> None:
             "AWS_REGION": "us-west-2",
             "BEDROCK_MODEL_ID": "us.anthropic.claude-sonnet-4-6",
             "OPENROUTER_API_KEY": "configured",
+            "ACTIVE_PROVIDER": "openrouter",
         },
     ):
         response = lambda_app.handler(_event("GET", "/health"), None)
@@ -34,7 +35,7 @@ def test_health() -> None:
     assert body["ok"] is True
     assert body["bedrock_configured"] is True
     assert body["openrouter_configured"] is True
-    assert body["active_provider"] == "bedrock_with_openrouter_fallback"
+    assert body["active_provider"] == "openrouter"
     assert body["bedrock_model"] == "us.anthropic.claude-sonnet-4-6"
 
 

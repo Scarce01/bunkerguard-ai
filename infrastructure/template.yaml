@@ -28,6 +28,9 @@ Parameters:
   OpenRouterModel:
     Type: String
     Default: anthropic/claude-sonnet-4.6
+  ActiveProvider:
+    Type: String
+    Default: bedrock_with_openrouter_fallback
   CorsOrigin:
     Type: String
     Default: https://bunkerguard-ai.vercel.app
@@ -111,6 +114,7 @@ Resources:
           ANTHROPIC_API_KEY: !Ref AnthropicApiKey
           OPENROUTER_API_KEY: !Ref OpenRouterApiKey
           OPENROUTER_MODEL: !Ref OpenRouterModel
+          ACTIVE_PROVIDER: !Ref ActiveProvider
           CORS_ORIGIN: !Ref CorsOrigin
 
   HttpApi:
