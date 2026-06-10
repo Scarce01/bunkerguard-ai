@@ -35,3 +35,27 @@ def put_json(prefix: str, identifier: str, payload: Any) -> str:
         ServerSideEncryption="AES256",
     )
     return key
+
+
+def put_bytes(prefix: str, identifier: str, filename: str, body: bytes, content_type: str) -> str:
+    import boto3
+
+    now = datetime.now(timezone.utc)
+    key = (
+        f"{_safe_part(prefix)}/{_safe_part(identifier)}/"
+        f"{now.strftime('%Y/%m/%d/%H%M%S%f')}-{_safe_part(filename)}"
+    )
+    boto3.client("s3").put_object(
+        Bucket=_bucket(),
+        Key=key,
+        Body=body,
+        ContentType=content_type,
+        ServerSideEncryption="AES256",
+    )
+    return key
+
+
+def get_bytes(key: str) -> bytes:
+    import boto3
+
+    return boto3.client("s3").get_object(Bucket=_bucket(), Key=key)["Body"].read()

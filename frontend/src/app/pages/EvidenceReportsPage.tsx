@@ -278,6 +278,21 @@ function EvidenceReportViewer({ report, onClose }: { report: EvidenceReportRow; 
           </div>
         )}
 
+        {r.environmental_impact && (
+          <div style={{ ...CARD, padding: '14px 16px' }}>
+            <div style={LABEL}>Environmental Impact</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <Field label="Estimated carbon" value={`${Number(r.environmental_impact.estimated_carbon_tco2e ?? 0).toLocaleString()} tCO2e`} mono />
+              <Field label="Fuel grade" value={r.environmental_impact.fuel_grade ?? 'VLSFO'} />
+              <Field label="Quantity delivered" value={`${r.environmental_impact.quantity_delivered_mt ?? 0} MT`} mono />
+              <Field label="Emission factor" value={`${r.environmental_impact.emission_factor_tco2e_per_mt ?? 0} tCO2e/MT`} mono />
+            </div>
+            <div style={{ marginTop: 9, fontSize: 10, lineHeight: 1.5, color: '#7FA5D3' }}>
+              Calculated deterministically from delivered quantity and fuel grade. This supplementary metric does not alter fraud risk or sign-off.
+            </div>
+          </div>
+        )}
+
         {/* AI Narrative */}
         {r.ai_narrative && (
           <div style={{ ...CARD, padding: '14px 16px' }}>

@@ -27,8 +27,10 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Any
 
+from carbon import calculate_carbon_exposure
 from .claude_client import call_claude
 from .prompts.evidence_report_prompt import (
     EVIDENCE_REPORT_SYSTEM,
@@ -202,7 +204,12 @@ def call_claude_for_report(payload: EvidenceReportInput) -> dict:
     # call_claude already returns a parsed dict when given the JSON-mode contract
     # used elsewhere in this package. If your `claude_client.call_claude`
     # signature differs, adjust this single line.
-    return call_claude(EVIDENCE_REPORT_SYSTEM, user_prompt, json_schema=None)
+    return call_claude(
+        EVIDENCE_REPORT_SYSTEM,
+        user_prompt,
+        json_schema=None,
+        max_tokens=1200,
+    )
 
 
 # ── Main entry points ────────────────────────────────────────────────────────
@@ -217,11 +224,51 @@ def generate_evidence_report(session_id: str) -> dict:
     payload = fetch_evidence_report_input(session_id)
     report = call_claude_for_report(payload)
 
-    for field in ("report_id", "session_id", "sign_off_status"):
-        if not report.get(field):
-            raise ValueError(
-                f"Generated report missing required field '{field}' for session {session_id}"
-            )
+    now = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    risk_package = payload.get("risk_package", {})
+    session = payload.get("session", {})
+    delivered_quantity = float(session.get("mfm_qty_mt") or session.get("bdn_qty_mt") or 0)
+    carbon = calculate_carbon_exposure(delivered_quantity, session.get("fuel_grade"))
+
+    # This section is deliberately overwritten after the LLM call. Carbon
+    # values come only from delivered quantity and the controlled factor table.
+    report["environmental_impact"] = {
+        "estimated_carbon_tco2e": carbon["estimated_tco2e"],
+        "fuel_grade": carbon["fuel_grade"],
+        "quantity_delivered_mt": delivered_quantity,
+        "emission_factor_tco2e_per_mt": carbon["emission_factor"],
+        "carbon_risk_level": carbon["carbon_risk_level"],
+        "calculation_method": "delivered fuel quantity x fuel-grade emission factor",
+        "estimated_from_available_session_data": carbon["used_fallback_fuel_grade"],
+        "supplementary_intelligence": True,
+    }
+
+    if not report.get("report_id"):
+        report["report_id"] = f"RPT-{session_id}-{now}"
+    if not report.get("generated_at"):
+        report["generated_at"] = datetime.now(timezone.utc).isoformat()
+    if not report.get("session_id"):
+        report["session_id"] = session_id
+    if not report.get("sign_off_status"):
+        recommended = str(
+            report.get("risk_assessment", {}).get("recommended_verdict")
+            or risk_package.get("recommended_verdict")
+            or ""
+        ).upper()
+        risk_category = str(
+            report.get("risk_assessment", {}).get("risk_category")
+            or risk_package.get("risk_category")
+            or ""
+        ).upper()
+        if "REFUSE" in recommended or risk_category in {"CRITICAL", "HIGH"}:
+            report["sign_off_status"] = "REFUSE_TO_SIGN"
+        elif "LOP" in recommended:
+            report["sign_off_status"] = "SIGN_WITH_LOP"
+        elif "NOTE" in recommended or risk_category == "MEDIUM":
+            report["sign_off_status"] = "SIGN_WITH_NOTES"
+        else:
+            report["sign_off_status"] = "SIGN"
+
     if report["session_id"] != session_id:
         raise ValueError(
             f"Report session_id mismatch: got {report['session_id']}, expected {session_id}"

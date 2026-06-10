@@ -92,3 +92,31 @@ def test_copilot_ai_sdk_text_stream_shape() -> None:
     assert response["statusCode"] == 200
     assert response["headers"]["Content-Type"].startswith("text/plain")
     assert response["body"] == "Refuse to sign."
+
+
+def test_ingest_bdn_stores_file_and_starts_async_worker() -> None:
+    event = _event(
+        "POST",
+        "/api/ingest-bdn",
+        {
+            "filename": "bdn.pdf",
+            "content_type": "application/pdf",
+            "file_base64": "JVBERi0xLjQK",
+        },
+    )
+    supabase = type("SB", (), {})()
+    table = type("Table", (), {})()
+    table.insert = lambda payload: table
+    table.execute = lambda: type("Result", (), {"data": [{"id": "doc-123"}]})()
+    supabase.table = lambda name: table
+    lambda_client = type("Lambda", (), {"invoke": lambda *args, **kwargs: {}})()
+    with (
+        patch.object(lambda_app, "put_bytes", return_value="uploaded-bdn/test.pdf"),
+        patch.object(lambda_app, "_supabase", return_value=supabase),
+        patch("boto3.client", return_value=lambda_client),
+        patch.dict("os.environ", {"AWS_LAMBDA_FUNCTION_NAME": "test-function"}),
+    ):
+        response = lambda_app.handler(event, None)
+    body = json.loads(response["body"])
+    assert response["statusCode"] == 202
+    assert body["document_id"] == "doc-123"

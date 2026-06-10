@@ -82,6 +82,10 @@ Resources:
                 Action:
                   - s3:ListBucket
                 Resource: !GetAtt EvidenceBucket.Arn
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-*
 
   BackendFunction:
     Type: AWS::Lambda::Function
@@ -160,6 +164,20 @@ Resources:
     Properties:
       ApiId: !Ref HttpApi
       RouteKey: POST /api/evidence-report
+      Target: !Sub integrations/${BackendIntegration}
+
+  IngestBdnRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /api/ingest-bdn
+      Target: !Sub integrations/${BackendIntegration}
+
+  IngestionStatusRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /api/ingestion/{document_id}
       Target: !Sub integrations/${BackendIntegration}
 
   DefaultStage:

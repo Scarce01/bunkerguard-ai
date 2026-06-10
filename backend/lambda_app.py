@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import base64
 import json
 import os
 from datetime import datetime, timezone
@@ -15,7 +16,8 @@ from llm.evidence_report_service import (
     generate_evidence_report,
     store_evidence_report,
 )
-from storage import put_json
+from ingestion.workflow import process_ingestion
+from storage import put_bytes, put_json
 
 
 def _cors_headers() -> dict[str, str]:
@@ -133,7 +135,92 @@ def _evidence_report(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _supabase():
+    from supabase import create_client
+
+    return create_client(
+        os.environ["SUPABASE_URL"],
+        os.environ["SUPABASE_SERVICE_ROLE_KEY"],
+    )
+
+
+def _ingest_bdn(payload: dict[str, Any]) -> dict[str, Any]:
+    filename = str(payload.get("filename") or "uploaded-bdn").strip()
+    content_type = str(payload.get("content_type") or "application/octet-stream")
+    encoded = payload.get("file_base64")
+    if not encoded:
+        raise ValueError("file_base64 is required")
+    try:
+        document = base64.b64decode(encoded, validate=True)
+    except Exception as exc:
+        raise ValueError("file_base64 is invalid") from exc
+    if not document:
+        raise ValueError("Uploaded BDN is empty")
+    if len(document) > 6 * 1024 * 1024:
+        raise ValueError("Uploaded BDN exceeds the 6 MB API limit")
+    if content_type not in {
+        "application/pdf", "image/jpeg", "image/png", "image/webp", "image/gif",
+    }:
+        raise ValueError("Supported BDN formats are PDF, JPEG, PNG, WEBP, and GIF")
+
+    file_hash = hashlib.sha256(document).hexdigest()
+    temporary_id = file_hash[:16]
+    s3_key = put_bytes("uploaded-bdn", temporary_id, filename, document, content_type)
+    result = _supabase().table("bdn_documents").insert({
+        "filename": filename,
+        "content_type": content_type,
+        "file_size_bytes": len(document),
+        "s3_key": s3_key,
+        "file_sha256": file_hash,
+        "status": "UPLOADED",
+        "current_stage": "UPLOADED",
+        "pipeline_status": {
+            "current_stage": "UPLOADED",
+            "steps": [{"stage": stage, "status": "COMPLETED" if stage == "UPLOADED" else "PENDING"} for stage in (
+                "UPLOADED", "OCR", "EXTRACTION", "ENRICHMENT",
+                "RISK_ANALYSIS", "EVIDENCE_GENERATION", "DECISION_RECOMMENDATION",
+            )],
+        },
+    }).execute()
+    document_id = result.data[0]["id"]
+
+    import boto3
+    boto3.client("lambda").invoke(
+        FunctionName=os.environ["AWS_LAMBDA_FUNCTION_NAME"],
+        InvocationType="Event",
+        Payload=json.dumps({"source": "bunkerguard.ingestion", "document_id": document_id}).encode(),
+    )
+    return {
+        "ok": True,
+        "document_id": document_id,
+        "status": "UPLOADED",
+        "status_url": f"/api/ingestion/{document_id}",
+    }
+
+
+def _ingestion_status(document_id: str) -> dict[str, Any]:
+    rows = _supabase().table("bdn_documents").select("*").eq("id", document_id).limit(1).execute().data
+    if not rows:
+        return {"ok": False, "error": "Ingestion document not found"}
+    row = rows[0]
+    session = None
+    if row.get("session_id"):
+        response = _supabase().table("bunkering_sessions").select(
+            "session_id,investigator_output,compliance_output,decision_output,evidence_s3_key"
+        ).eq("session_id", row["session_id"]).maybe_single().execute()
+        session = response.data
+    return {
+        "ok": True,
+        "document": row,
+        "session": session,
+    }
+
+
 def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
+    if event.get("source") == "bunkerguard.ingestion":
+        process_ingestion(str(event["document_id"]))
+        return {"ok": True}
+
     method, path = _route(event)
     if method == "OPTIONS":
         return _response(204, {})
@@ -170,6 +257,11 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
             return _response(200, result)
         if method == "POST" and path == "/api/evidence-report":
             return _response(200, _evidence_report(_body(event)))
+        if method == "POST" and path == "/api/ingest-bdn":
+            return _response(202, _ingest_bdn(_body(event)))
+        if method == "GET" and path.startswith("/api/ingestion/"):
+            status = _ingestion_status(path.rsplit("/", 1)[-1])
+            return _response(200 if status.get("ok") else 404, status)
         return _response(404, {"ok": False, "error": "Not found"})
     except ValueError as exc:
         return _response(400, {"ok": False, "error": str(exc)})

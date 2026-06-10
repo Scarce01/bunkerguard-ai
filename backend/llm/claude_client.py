@@ -174,14 +174,19 @@ def _provider_result(
     }
 
 
-def _is_access_denied(exc: Exception) -> bool:
+def _should_fallback_from_bedrock(exc: Exception) -> bool:
     try:
         from botocore.exceptions import ClientError
     except ImportError:
         return False
-    return (
-        isinstance(exc, ClientError)
-        and exc.response.get("Error", {}).get("Code") == "AccessDeniedException"
+    if not isinstance(exc, ClientError):
+        return False
+    error = exc.response.get("Error", {})
+    code = error.get("Code")
+    message = str(error.get("Message", "")).lower()
+    return code == "AccessDeniedException" or (
+        code == "ValidationException"
+        and ("inference profile" in message or "on-demand throughput" in message)
     )
 
 
@@ -194,7 +199,7 @@ def _call_openrouter(
     api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
-            "Bedrock access was denied and OPENROUTER_API_KEY is not configured"
+            "Bedrock could not serve the request and OPENROUTER_API_KEY is not configured"
         )
 
     model = os.environ.get("OPENROUTER_MODEL", OPENROUTER_MODEL).strip()
@@ -277,10 +282,10 @@ def call_text(
                 inferenceConfig={"maxTokens": max_tokens, "temperature": 0.1},
             )
         except Exception as exc:
-            if not _is_access_denied(exc):
+            if not _should_fallback_from_bedrock(exc):
                 raise
             log.warning(
-                "bedrock_access_denied_falling_back",
+                "bedrock_unavailable_falling_back",
                 extra={"model": model_id, "fallback_provider": "openrouter"},
             )
             return _call_openrouter(

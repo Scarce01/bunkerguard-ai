@@ -112,6 +112,9 @@ function SuppliersIndex() {
                     ? <><Shield size={10} style={{ display: 'inline', marginRight: 4, color: '#FF5656' }} /> {s.criticalCount} critical</>
                     : 'No critical incidents'}
                 </span>
+                <span style={{ color: '#2EA8FF', fontFamily: "'JetBrains Mono', monospace" }}>
+                  {s.totalCarbonExposure.toFixed(0)} tCO2e · {s.carbonRiskLevel}
+                </span>
                 <span className="flex items-center gap-1" style={{ color: col.text, fontWeight: 700 }}>
                   View dossier <ArrowRight size={11} />
                 </span>
@@ -255,6 +258,38 @@ function SupplierDetail({ supplierId }: { supplierId: string }) {
           </div>
         </SectionPanel>
       </div>
+
+      <SectionPanel title="Carbon Exposure (Supplementary)">
+        <div className="grid grid-cols-3 gap-6">
+          <div>
+            <div className="text-xs text-foreground-muted mb-1">Total Carbon Exposure</div>
+            <div className="text-2xl font-bold text-foreground">
+              {(supplier.totalCarbonExposure ?? 0).toLocaleString(undefined, { maximumFractionDigits: 1 })} tCO2e
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-foreground-muted mb-1">Carbon Risk Level</div>
+            <div className="text-xl font-bold text-primary">{supplier.carbonRiskLevel ?? 'LOW'}</div>
+            <div className="text-xs text-foreground-muted mt-1">Shown alongside, never instead of, fraud risk.</div>
+          </div>
+          <div>
+            <div className="text-xs text-foreground-muted mb-2">Carbon Exposure Trend</div>
+            <div className="flex items-end gap-1 h-12">
+              {(supplier.carbonExposureTrend?.length
+                ? supplier.carbonExposureTrend.slice(-8)
+                : [{ tco2e: supplier.totalCarbonExposure ?? 0 }]
+              ).map((point: any, index: number, points: any[]) => {
+                const max = Math.max(...points.map((item: any) => item.tco2e), 1);
+                return <div key={index} className="flex-1 bg-primary/40 rounded-t" style={{ height: `${Math.max(8, (point.tco2e / max) * 100)}%` }} />;
+              })}
+            </div>
+          </div>
+        </div>
+        <div className="mt-4 pt-3 border-t border-border text-xs text-foreground-muted">
+          Carbon exposure is calculated from delivered fuel quantity × fuel-grade emission factor.
+          {supplier.carbonEstimatedFromAvailableData && <span className="text-warning"> Estimated from available session data.</span>}
+        </div>
+      </SectionPanel>
 
       {/* Reputation Trend */}
       <SectionPanel title="Reputation Trend (Last 6 Weeks)">

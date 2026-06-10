@@ -4,6 +4,7 @@ import { PortCopilot } from '../components/PortCopilot';
 import { SupplierProfilePanel } from '../components/details/SupplierProfilePanel';
 import { mockSupplierReputation } from '../../data/mockSupplierReputation';
 import { useSupplierReputation } from '../../lib/useSupplierReputation';
+import { useCarbonExposure } from '../../lib/useCarbonExposure';
 import { AgentConversationStream } from '../components/intelligence/AgentConversationStream';
 
 const CARD: React.CSSProperties = {
@@ -855,6 +856,7 @@ export function IntelligencePage() {
   const [profilePanelOpen, setProfilePanelOpen] = useState(false);
   const [selectedSupplierKey, setSelectedSupplierKey] = useState<string | null>(null);
   const navigate = useNavigate();
+  const carbon = useCarbonExposure();
 
   const handleInvestigate = (key: string | null) => {
     setSelectedSupplier(key);
@@ -1123,6 +1125,92 @@ export function IntelligencePage() {
                   <div style={{ fontSize: 9, color: '#5A8AB4' }}>{kpi.sub}</div>
                 </div>
               ))}
+            </div>
+
+            {/* Carbon Exposure Analysis — supplementary to fraud intelligence */}
+            <div style={{ ...CARD, padding: '18px 20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, marginBottom: 14 }}>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: '#EAF4FF' }}>Carbon Exposure Analysis</div>
+                  <div style={{ fontSize: 10, color: '#5A8AB4', marginTop: 3 }}>
+                    Supplementary environmental intelligence. Fraud risk remains the primary decision signal.
+                  </div>
+                </div>
+                <span style={{ fontSize: 9, fontWeight: 700, color: carbon.carbonRiskLevel === 'HIGH' || carbon.carbonRiskLevel === 'CRITICAL' ? '#E0A020' : '#34C98C', letterSpacing: '0.08em' }}>
+                  {carbon.loading ? 'CALCULATING' : `${carbon.carbonRiskLevel} CARBON RISK`}
+                </span>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 16 }}>
+                {[
+                  { label: 'Total Fleet Carbon', value: `${carbon.totalTco2e.toLocaleString(undefined, { maximumFractionDigits: 1 })} tCO2e` },
+                  { label: 'Average / Session', value: `${carbon.averagePerSession.toLocaleString(undefined, { maximumFractionDigits: 1 })} tCO2e` },
+                  { label: 'Highest Carbon Supplier', value: carbon.suppliers[0]?.supplier ?? '—' },
+                  { label: 'Carbon Risk Indicator', value: carbon.carbonRiskLevel },
+                ].map((item) => (
+                  <div key={item.label} style={{ padding: '11px 13px', borderRadius: 7, background: 'rgba(74,158,255,0.045)', border: '1px solid rgba(74,158,255,0.12)' }}>
+                    <div style={LABEL}>{item.label}</div>
+                    <div style={{ fontSize: item.label === 'Highest Carbon Supplier' ? 12 : 16, fontWeight: 800, color: '#BFD7F7', fontFamily: "'JetBrains Mono', monospace" }}>{item.value}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ overflowX: 'auto', marginBottom: 16 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
+                  <thead>
+                    <tr style={{ color: '#5A8AB4', textAlign: 'left', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                      {['Supplier', 'Fuel', 'Total Fuel MT', 'Carbon tCO2e', 'Financial Exposure', 'Risk Score', 'Flagged', 'Carbon Risk'].map((heading) => (
+                        <th key={heading} style={{ padding: '7px 8px', fontWeight: 700 }}>{heading}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {carbon.suppliers.map((supplier) => (
+                      <tr key={supplier.supplier} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', color: '#BFD7F7' }}>
+                        <td style={{ padding: '8px', fontWeight: 700 }}>{supplier.supplier}</td>
+                        <td style={{ padding: '8px' }}>{supplier.fuel}</td>
+                        <td style={{ padding: '8px' }}>{supplier.totalFuelMt.toFixed(1)}</td>
+                        <td style={{ padding: '8px', color: '#3AABFF', fontWeight: 700 }}>{supplier.carbonTco2e.toFixed(1)}</td>
+                        <td style={{ padding: '8px' }}>${supplier.financialExposure.toLocaleString()}</td>
+                        <td style={{ padding: '8px' }}>{supplier.riskScore.toFixed(0)}</td>
+                        <td style={{ padding: '8px' }}>{supplier.flaggedSessions}</td>
+                        <td style={{ padding: '8px', fontWeight: 700 }}>{supplier.carbonRiskLevel}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 18 }}>
+                <div style={{ padding: 12, borderRadius: 7, background: 'rgba(255,255,255,0.025)' }}>
+                  <div style={LABEL}>Carbon Breakdown</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: '#3AABFF' }}>{carbon.totalTco2e.toFixed(1)} tCO2e</div>
+                  <div style={{ fontSize: 9, color: '#7FA5D3', marginTop: 7 }}>
+                    Monitoring threshold: 5,000 tCO2e · {carbon.totalTco2e >= 5000 ? 'threshold reached' : 'below threshold'}
+                  </div>
+                </div>
+                <div>
+                  <div style={LABEL}>Supplier Contribution & Exposure Trend</div>
+                  {carbon.suppliers.map((supplier) => (
+                    <div key={supplier.supplier} style={{ display: 'grid', gridTemplateColumns: '160px 1fr 48px', gap: 8, alignItems: 'center', marginBottom: 7 }}>
+                      <span style={{ fontSize: 9, color: '#BFD7F7', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{supplier.supplier}</span>
+                      <div style={{ height: 5, background: 'rgba(255,255,255,0.06)', borderRadius: 3 }}>
+                        <div style={{ width: `${supplier.contributionPercent}%`, height: '100%', borderRadius: 3, background: '#3AABFF' }} />
+                      </div>
+                      <span style={{ fontSize: 9, color: '#7FA5D3', textAlign: 'right' }}>{supplier.contributionPercent}%</span>
+                    </div>
+                  ))}
+                  <div style={{ fontSize: 9, color: '#5A8AB4', marginTop: 8 }}>
+                    Trend uses dated session deliveries when available.
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.06)', fontSize: 9.5, color: '#7FA5D3' }}>
+                Carbon exposure is calculated from delivered fuel quantity × fuel-grade emission factor.
+                {carbon.estimatedFromAvailableData && <span style={{ color: '#E0A020' }}> Estimated from available session data.</span>}
+                {carbon.error && <span style={{ color: '#E84E4E' }}> {carbon.error}</span>}
+              </div>
             </div>
 
             {/* 2-col: Affected Fleet + Cascading Impact */}

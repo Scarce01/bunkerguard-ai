@@ -44,12 +44,13 @@ python3 -m pip install \
 cp -R \
   "$ROOT_DIR/backend/anomaly" \
   "$ROOT_DIR/backend/contracts" \
+  "$ROOT_DIR/backend/enrichment" \
   "$ROOT_DIR/backend/ingestion" \
   "$ROOT_DIR/backend/llm" \
   "$ROOT_DIR/backend/policy" \
   "$ROOT_DIR/backend/risk" \
   "$BUILD_DIR/"
-cp "$ROOT_DIR/backend/lambda_app.py" "$ROOT_DIR/backend/storage.py" "$BUILD_DIR/"
+cp "$ROOT_DIR/backend/lambda_app.py" "$ROOT_DIR/backend/storage.py" "$ROOT_DIR/backend/carbon.py" "$BUILD_DIR/"
 rm -f "$BUILD_DIR"/contracts/keys/*.priv
 
 (
