@@ -10,7 +10,6 @@ import {
   type GeneratedReport, PDF_SCHEMA_VERSION,
 } from '../../lib/useGeneratedReports';
 import { PdfMeta } from '../../lib/pdfBuilder';
-import { PortCopilot } from '../components/PortCopilot';
 import { PdfThumbnail } from '../components/reports/PdfThumbnail';
 
 /* ── Design tokens shared with the rest of the app ─────────────── */
@@ -376,7 +375,6 @@ export function EvidenceReportsPage() {
         ))}
       </div>
 
-      <PortCopilot />
     </div>
   );
 }

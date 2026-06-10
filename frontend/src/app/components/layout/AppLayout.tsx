@@ -1,6 +1,7 @@
 import { Outlet } from 'react-router';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
+import { PortCopilot } from '../PortCopilot';
 
 export function AppLayout() {
   /* App shell:
@@ -22,6 +23,7 @@ export function AppLayout() {
           <Outlet />
         </main>
       </div>
+      <PortCopilot />
     </div>
   );
 }

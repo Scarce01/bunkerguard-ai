@@ -20,7 +20,6 @@ import {
   VesselSpot,
 } from '../../data/terminals';
 import { useLiveDashboard } from '../../lib/useLiveDashboard';
-import { PortCopilot } from '../components/PortCopilot';
 
 /** Placeholder shown inside a panel when a terminal/vessel is open but its
  *  scoped data hasn't been wired in yet. */
@@ -616,8 +615,6 @@ export function DashboardPage() {
         </div>
       </div>
 
-      {/* Floating BunkerGuard Copilot — always-on AI helper */}
-      <PortCopilot />
     </div>
   );
 }

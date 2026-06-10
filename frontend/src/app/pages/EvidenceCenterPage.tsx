@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router';
-import { PortCopilot } from '../components/PortCopilot';
 import { FileText, Shield, Download, CheckCircle2, AlertTriangle, Sparkles, X, Send, ChevronRight } from 'lucide-react';
 
 /* ── Design tokens ───────────────────────────────────────────────── */
@@ -620,7 +619,6 @@ export function EvidenceCenterPage() {
 
       {/* Copilot Drawer */}
       <CopilotDrawer open={copilotOpen} onClose={() => setCopilotOpen(false)} caseData={selectedCase} />
-      <PortCopilot />
     </div>
   );
 }

@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
-import { PortCopilot } from '../components/PortCopilot';
 import { KiroGhostNode, AGENT_AVATAR_SRC } from '../components/ai/KiroGhost';
 import { SupplierProfilePanel } from '../components/details/SupplierProfilePanel';
 import { mockSupplierReputation } from '../../data/mockSupplierReputation';
@@ -1372,8 +1371,6 @@ export function IntelligencePage() {
 
       </div>
       </div>
-
-      <PortCopilot />
 
       {/* Supplier Profile Panel — live Supabase suppliers + historical_transactions */}
       {profilePanelOpen && selectedSupplierKey && (

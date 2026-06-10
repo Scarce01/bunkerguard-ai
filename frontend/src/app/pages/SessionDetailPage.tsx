@@ -4,7 +4,6 @@ import { StatusPill } from '../components/dashboard/StatusPill';
 import { useSessionDetail } from '../../lib/useSessionDetail';
 import { useFuelReference } from '../../lib/useFuelReference';
 import { EvidenceReportDrawer } from '../components/evidence/EvidenceReportDrawer';
-import { PortCopilot } from '../components/PortCopilot';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { ArrowLeft, CheckCircle2, XCircle, AlertTriangle, FileText, Shield, Radio } from 'lucide-react';
 import { useState } from 'react';
@@ -628,7 +627,6 @@ export function SessionDetailPage() {
         open={reportDrawerOpen}
         onClose={() => setReportDrawerOpen(false)}
       />
-      <PortCopilot sessionId={sessionId} />
     </div>
   );
 }
