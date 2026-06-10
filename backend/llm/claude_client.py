@@ -430,6 +430,98 @@ def call_claude(
     }
 
 
+def call_claude_with_tools(
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    tools: list[dict],
+    dispatch,
+    prior_messages: Optional[list[dict]] = None,
+    max_iterations: int = 6,
+    max_tokens: int = MAX_TOKENS,
+    cache_system: bool = True,
+) -> dict:
+    """Run a Claude tool-use loop and return the final answer.
+
+    Args:
+        system_prompt: stable, cacheable instructions for the agent.
+        user_prompt: the officer's question.
+        tools: Anthropic tool specs (see CopilotTools.TOOL_SPECS).
+        dispatch: callable ``(name, args) -> dict`` that runs one tool.
+        max_iterations: cap on Claude<->tool rounds. Officer flow rarely needs
+            more than 3; the cap is just a runaway guard.
+
+    Returns:
+        ``{"answer": <final text>, "tool_calls": [...], "_usage": {...}}``
+        or ``{"error": <msg>, "_usage": {...}}`` on failure. ``tool_calls``
+        is the full transcript so the UI can render the chart/PDF paths the
+        tools produced.
+    """
+    client = _get_client()
+
+    system_block: list[dict[str, Any]] = [{"type": "text", "text": system_prompt}]
+    if cache_system:
+        system_block[0]["cache_control"] = {"type": "ephemeral"}
+
+    messages: list[dict[str, Any]] = list(prior_messages or [])
+    messages.append({"role": "user", "content": user_prompt})
+    tool_calls: list[dict[str, Any]] = []
+    usage_total = {"input_tokens": 0, "output_tokens": 0,
+                   "cache_read_input_tokens": 0,
+                   "cache_creation_input_tokens": 0, "model": MODEL}
+
+    for _ in range(max_iterations):
+        try:
+            response = client.messages.create(
+                model=MODEL,
+                max_tokens=max_tokens,
+                system=system_block,
+                tools=tools,
+                messages=messages,
+            )
+        except Exception as e:
+            log.exception("claude_tool_call_failed")
+            return {"error": f"{type(e).__name__}: {e}", "_usage": usage_total}
+
+        u = response.usage
+        usage_total["input_tokens"] += u.input_tokens
+        usage_total["output_tokens"] += u.output_tokens
+        usage_total["cache_read_input_tokens"] += getattr(
+            u, "cache_read_input_tokens", 0) or 0
+        usage_total["cache_creation_input_tokens"] += getattr(
+            u, "cache_creation_input_tokens", 0) or 0
+
+        # Append assistant turn (text + tool_use blocks) verbatim.
+        messages.append({"role": "assistant", "content": response.content})
+
+        if response.stop_reason != "tool_use":
+            answer = "".join(b.text for b in response.content
+                             if getattr(b, "type", None) == "text").strip()
+            return {"answer": answer, "tool_calls": tool_calls,
+                    "_usage": usage_total}
+
+        # Run every tool_use block in this turn, return all results in one
+        # user message — required by the Anthropic API.
+        tool_results: list[dict[str, Any]] = []
+        for block in response.content:
+            if getattr(block, "type", None) != "tool_use":
+                continue
+            name = block.name
+            args = block.input or {}
+            log.info("tool_call", extra={"tool": name, "args": args})
+            result = dispatch(name, args) or {}
+            tool_calls.append({"name": name, "args": args, "result": result})
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": block.id,
+                "content": json.dumps(result, default=str),
+            })
+        messages.append({"role": "user", "content": tool_results})
+
+    return {"error": f"tool loop exceeded {max_iterations} iterations",
+            "tool_calls": tool_calls, "_usage": usage_total}
+
+
 def _try_parse_json(text: str) -> Optional[dict]:
     """Best-effort JSON extraction: strip code fences, then parse."""
     cleaned = text.strip()

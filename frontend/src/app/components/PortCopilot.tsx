@@ -1,36 +1,63 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useChat } from '@ai-sdk/react';
-import { TextStreamChatTransport } from 'ai';
+import { useEffect, useRef, useState } from 'react';
+import { useParams } from 'react-router';
 import { Bot, Send, Sparkles, X, Command } from 'lucide-react';
 import { useCopilotContext } from '../../lib/useCopilotContext';
-import { apiUrl } from '../../lib/api';
+import { useCopilotSessions } from '../../lib/useCopilotSessions';
 
 const RAIL_WIDTH_PX = 380;
 const OVERLAY_BREAKPOINT_PX = 1100;
 
+interface ToolCall {
+  name: string;
+  args?: Record<string, any>;
+  result?: Record<string, any>;
+}
+
+interface ChatMsg {
+  role: 'user' | 'assistant';
+  content: string;
+  toolCalls?: ToolCall[];
+}
+
 const SUGGESTIONS = [
-  'What is the worst session right now?',
-  'Should I refuse to sign Session SES-2026-016?',
-  "Summarise Supplier Gamma's reputation",
-  'What anomalies tripped on EVER GIVEN?',
+  'Do I sign this BDN?',
+  'Plot the cumulative flow.',
+  'Why is the score this high?',
+  'Draft the LOP.',
 ];
 
 const SYSTEM_PROMPT = `You are BunkerGuard Copilot, an assistant for a Chief Engineer monitoring marine bunkering operations in Singapore. The user is at the dashboard looking at live sessions, suppliers, and anomalies. Be terse, concrete, and back every claim with the specific session_id, supplier name, rule code, or risk number from the CONTEXT block below. If the user asks something not covered by the context, say so plainly. Never invent vessel names, numbers, or verdicts. Format multi-line answers with short markdown bullets.`;
 
-export function PortCopilot() {
+interface PortCopilotProps {
+  /** Force the copilot into tool-mode for this session, regardless of route.
+   *  Mounted pages that already have a focused session (Dashboard's top-risk
+   *  card, EvidenceCenter, etc.) should pass it here. */
+  sessionId?: string;
+}
+
+export function PortCopilot({ sessionId: sessionIdProp }: PortCopilotProps = {}) {
   const [open, setOpen] = useState(false);
+  const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [providerLabel, setProviderLabel] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const { text: contextText, loading: ctxLoading } = useCopilotContext();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const transport = useMemo(
-    () => new TextStreamChatTransport({
-      api: apiUrl('/api/copilot'),
-      headers: { 'X-BunkerGuard-Stream': 'text' },
-    }),
-    [],
-  );
-  const { messages, sendMessage, status, error } = useChat({ transport });
-  const busy = status === 'submitted' || status === 'streaming';
+
+  // Tool-mode resolution priority:
+  //   1. user override via the picker chip (manualSessionId)
+  //   2. explicit prop from the parent page (Dashboard top-risk card etc.)
+  //   3. /sessions/:sessionId route param
+  //   4. top-risk session from Supabase (so the bar is *always* tool-mode)
+  const params = useParams<{ sessionId?: string }>();
+  const { sessions: pickerSessions } = useCopilotSessions(12);
+  const [manualSessionId, setManualSessionId] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const sessionId =
+    manualSessionId ?? sessionIdProp ?? params.sessionId ?? pickerSessions[0]?.session_id;
+  const toolMode = Boolean(sessionId);
+  const focusedSession = pickerSessions.find((s) => s.session_id === sessionId);
 
   // Rail vs overlay — wide viewports push content left; small viewports overlay
   // so the dashboard isn't crushed.
@@ -77,170 +104,94 @@ export function PortCopilot() {
   async function send(prompt: string) {
     const text = prompt.trim();
     if (!text || busy) return;
+    setError(null);
+    const next: ChatMsg[] = [...messages, { role: 'user', content: text }];
+    setMessages(next);
     setInput('');
-    const system = `${SYSTEM_PROMPT}\n\n## CONTEXT — live Supabase snapshot\n${contextText}`;
-    await sendMessage({ text }, { body: { system, maxTokens: 700 } });
+    setBusy(true);
+
+    try {
+      if (toolMode && sessionId) {
+        // Tool-mode: backend runs Claude with the 8-tool surface.
+        const history = messages.flatMap((m) => {
+          const turns: any[] = [{ role: m.role, content: { text: m.content } }];
+          for (const tc of m.toolCalls ?? []) {
+            turns.push({ role: 'tool', content: tc });
+          }
+          return turns;
+        });
+        const res = await fetch('/api/copilot-chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: sessionId, question: text, history }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data?.ok === false) {
+          throw new Error(data?.error ?? `chat proxy ${res.status}`);
+        }
+        setProviderLabel(`Anthropic · ${data?.usage?.model ?? 'tool-mode'}`);
+        setMessages([...next, {
+          role: 'assistant',
+          content: data.answer || '(empty)',
+          toolCalls: data.tool_calls ?? [],
+        }]);
+      } else {
+        // Fallback: multi-session text-context chat (the original path).
+        const sys = `${SYSTEM_PROMPT}\n\n## CONTEXT — live Supabase snapshot\n${contextText}`;
+        const res = await fetch('/api/copilot', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ system: sys, messages: next, maxTokens: 700 }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body?.error ?? `proxy ${res.status}`);
+        }
+        const data = await res.json();
+        setProviderLabel(data?.provider ?? null);
+        setMessages([...next, { role: 'assistant', content: data.text ?? '(empty)' }]);
+      }
+    } catch (e: any) {
+      setError(e?.message ?? String(e));
+      setMessages([...next, {
+        role: 'assistant',
+        content: '⚠ Copilot proxy unavailable — set ANTHROPIC_API_KEY in your environment and restart Vite. Falling back to the live context snapshot only.',
+      }]);
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (!open) {
     return (
       <button
-        className="bunkerguard-copilot-trigger"
         onClick={() => setOpen(true)}
-        aria-label="Open BunkerGuard Copilot"
         style={{
           position: 'fixed', bottom: 22, right: 22, zIndex: 60,
-          width: 92, height: 92,
-          padding: 0,
-          borderRadius: '50%',
-          background: 'transparent',
-          border: 0,
+          padding: '10px 14px',
+          borderRadius: 28,
+          background: 'linear-gradient(135deg, rgba(46,168,255,0.95), rgba(111,91,255,0.95))',
+          border: '1px solid rgba(255,255,255,0.18)',
+          boxShadow: '0 6px 24px rgba(46,168,255,0.45)',
+          color: '#fff',
           cursor: 'pointer',
-          display: 'grid',
-          placeItems: 'center',
+          display: 'flex', alignItems: 'center', gap: 8,
+          fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
+          backdropFilter: 'blur(10px)',
         }}
         title="BunkerGuard Copilot — Cmd/Ctrl + K"
       >
-        <style>{`
-          @keyframes copilotOrbitClockwise {
-            to { transform: rotate(360deg); }
-          }
-          @keyframes copilotOrbitCounterClockwise {
-            to { transform: rotate(-360deg); }
-          }
-          @keyframes copilotOrbBreathe {
-            0%, 100% {
-              opacity: 0.82;
-              transform: scale(0.96);
-              box-shadow:
-                0 0 10px rgba(74, 200, 255, 0.24),
-                0 0 24px rgba(74, 200, 255, 0.08);
-            }
-            50% {
-              opacity: 1;
-              transform: scale(1);
-              box-shadow:
-                0 0 14px rgba(74, 200, 255, 0.34),
-                0 0 30px rgba(74, 200, 255, 0.12);
-            }
-          }
-          .bunkerguard-copilot-trigger:focus-visible .copilot-core {
-            outline: 2px solid rgba(74, 200, 255, 0.72);
-            outline-offset: 4px;
-          }
-          .bunkerguard-copilot-trigger:hover .copilot-core {
-            border-color: rgba(74, 200, 255, 0.34);
-            background: linear-gradient(145deg, rgba(18, 43, 65, 0.92), rgba(7, 20, 34, 0.96));
-            box-shadow:
-              inset 0 1px 0 rgba(255, 255, 255, 0.08),
-              0 10px 32px rgba(0, 0, 0, 0.38),
-              0 0 24px rgba(74, 200, 255, 0.10);
-          }
-          @media (prefers-reduced-motion: reduce) {
-            .copilot-orbit,
-            .copilot-orb {
-              animation: none !important;
-            }
-          }
-        `}</style>
-
-        <svg
-          className="copilot-orbit"
-          aria-hidden="true"
-          viewBox="0 0 92 92"
-          style={{
-            position: 'absolute',
-            inset: 0,
-            width: 92,
-            height: 92,
-            animation: 'copilotOrbitClockwise 28s linear infinite',
-            transformOrigin: '50% 50%',
-            pointerEvents: 'none',
-          }}
-        >
-          <circle
-            cx="46"
-            cy="46"
-            r="42"
-            fill="none"
-            stroke="rgba(74, 200, 255, 0.18)"
-            strokeWidth="1"
-            strokeDasharray="6 10"
-            strokeLinecap="round"
-          />
-        </svg>
-
-        <svg
-          className="copilot-orbit"
-          aria-hidden="true"
-          viewBox="0 0 92 92"
-          style={{
-            position: 'absolute',
-            inset: 0,
-            width: 92,
-            height: 92,
-            animation: 'copilotOrbitCounterClockwise 36s linear infinite',
-            transformOrigin: '50% 50%',
-            pointerEvents: 'none',
-          }}
-        >
-          <circle
-            cx="46"
-            cy="46"
-            r="37"
-            fill="none"
-            stroke="rgba(74, 200, 255, 0.08)"
-            strokeWidth="1"
-            strokeDasharray="3 18"
-            strokeLinecap="round"
-          />
-        </svg>
-
-        <span
-          className="copilot-core"
-          style={{
-            width: 76,
-            height: 76,
-            borderRadius: '50%',
-            background: 'linear-gradient(145deg, rgba(15, 36, 56, 0.90), rgba(6, 18, 31, 0.96))',
-            border: '1px solid rgba(74, 200, 255, 0.22)',
-            boxShadow: `
-              inset 0 1px 0 rgba(255, 255, 255, 0.07),
-              inset 0 -10px 24px rgba(0, 0, 0, 0.20),
-              0 10px 30px rgba(0, 0, 0, 0.34),
-              0 0 20px rgba(74, 200, 255, 0.07)
-            `,
-            backdropFilter: 'blur(18px) saturate(135%)',
-            WebkitBackdropFilter: 'blur(18px) saturate(135%)',
-            display: 'grid',
-            placeItems: 'center',
-            transition: 'background 220ms ease, border-color 220ms ease, box-shadow 220ms ease',
-          }}
-        >
-          <span
-            className="copilot-orb"
-            style={{
-              width: 38,
-              height: 38,
-              borderRadius: '50%',
-              background: `
-                radial-gradient(circle at 38% 32%,
-                  rgba(220, 248, 255, 0.96) 0%,
-                  rgba(100, 211, 255, 0.72) 18%,
-                  rgba(45, 150, 205, 0.34) 48%,
-                  rgba(10, 42, 66, 0.18) 72%,
-                  rgba(5, 20, 34, 0) 100%)
-              `,
-              border: '1px solid rgba(135, 225, 255, 0.16)',
-              display: 'grid',
-              placeItems: 'center',
-              color: '#BCEEFF',
-              animation: 'copilotOrbBreathe 4.8s ease-in-out infinite',
-            }}
-          >
-            <Bot size={17} strokeWidth={1.6} />
-          </span>
-        </span>
+        <Bot size={18} />
+        <span>Copilot</span>
+        <kbd style={{
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: 9.5, fontWeight: 700,
+          padding: '1px 5px',
+          background: 'rgba(255,255,255,0.18)',
+          border: '1px solid rgba(255,255,255,0.25)',
+          borderRadius: 3,
+          color: '#fff',
+        }}>⌘K</kbd>
       </button>
     );
   }
@@ -293,7 +244,7 @@ export function PortCopilot() {
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: '#E5F2FF' }}>BunkerGuard Copilot</div>
           <div style={{ fontSize: 9, color: '#7FA5D3', letterSpacing: 0.6 }}>
-            Vercel AI SDK · AWS Bedrock
+            {providerLabel ?? 'Provider: Anthropic / AWS Bedrock (swappable)'}
             {ctxLoading ? ' · loading context…' : ` · ${contextText.length} chars context`}
           </div>
         </div>
@@ -322,6 +273,81 @@ export function PortCopilot() {
         >
           <X size={16} />
         </button>
+      </div>
+
+      {/* Session selector chip — lets the officer switch the focused session
+          on any page without leaving it. The label shows the active vessel
+          so it's obvious which session the next answer applies to. */}
+      <div style={{
+        padding: '8px 14px',
+        borderBottom: '1px solid rgba(46,168,255,0.12)',
+        position: 'relative',
+        display: 'flex', alignItems: 'center', gap: 8,
+        fontSize: 11, color: '#7FA5D3',
+      }}>
+        <span style={{ letterSpacing: 0.6 }}>FOCUS</span>
+        <button
+          onClick={() => setPickerOpen((v) => !v)}
+          style={{
+            padding: '4px 10px',
+            background: 'rgba(46,168,255,0.10)',
+            border: '1px solid rgba(46,168,255,0.35)',
+            borderRadius: 999,
+            color: '#E5F2FF', fontSize: 11, fontWeight: 600,
+            cursor: 'pointer',
+            display: 'flex', alignItems: 'center', gap: 6,
+          }}>
+          {sessionId ? (
+            <>
+              <span>{sessionId}</span>
+              {focusedSession?.vessel_name && (
+                <span style={{ color: '#7FA5D3', fontWeight: 500 }}>
+                  · {focusedSession.vessel_name}
+                </span>
+              )}
+            </>
+          ) : (
+            <span style={{ color: '#7FA5D3' }}>no session — pick one</span>
+          )}
+          <span style={{ color: '#7FA5D3' }}>▾</span>
+        </button>
+        {pickerOpen && pickerSessions.length > 0 && (
+          <div style={{
+            position: 'absolute', top: 36, left: 14, right: 14,
+            maxHeight: 260, overflowY: 'auto',
+            background: 'rgba(10,23,38,0.96)',
+            border: '1px solid rgba(46,168,255,0.30)',
+            borderRadius: 8, zIndex: 5,
+            boxShadow: '0 10px 30px rgba(0,0,0,0.55)',
+          }}>
+            {pickerSessions.map((s) => (
+              <button key={s.session_id}
+                onClick={() => {
+                  setManualSessionId(s.session_id);
+                  setPickerOpen(false);
+                  setMessages([]);  // fresh chat per session
+                }}
+                style={{
+                  width: '100%', textAlign: 'left',
+                  padding: '8px 10px',
+                  background: s.session_id === sessionId
+                    ? 'rgba(46,168,255,0.18)'
+                    : 'transparent',
+                  border: 'none',
+                  borderBottom: '1px solid rgba(46,168,255,0.08)',
+                  color: '#E5F2FF', fontSize: 11,
+                  cursor: 'pointer',
+                  display: 'flex', flexDirection: 'column', gap: 2,
+                }}>
+                <span><b>{s.session_id}</b> · {s.vessel_name ?? '—'}</span>
+                <span style={{ fontSize: 10, color: '#7FA5D3' }}>
+                  {s.supplier_name ?? '—'} · risk {s.risk_score ?? '—'}/100 ·{' '}
+                  {s.verdict ?? '—'}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -353,21 +379,26 @@ export function PortCopilot() {
           </>
         )}
 
-        {messages.map((m) => (
-          <div key={m.id} style={{
+        {messages.map((m, i) => (
+          <div key={i} style={{
             alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start',
-            maxWidth: '88%',
-            padding: '8px 12px',
-            background: m.role === 'user' ? 'rgba(46,168,255,0.20)' : 'rgba(127,165,211,0.10)',
-            border: `1px solid ${m.role === 'user' ? 'rgba(46,168,255,0.45)' : 'rgba(127,165,211,0.25)'}`,
-            borderRadius: 8,
-            fontSize: 12, lineHeight: 1.45,
-            color: '#E5F2FF',
-            whiteSpace: 'pre-wrap',
+            maxWidth: '92%',
+            display: 'flex', flexDirection: 'column', gap: 6,
           }}>
-            {m.parts.map((part, index) =>
-              part.type === 'text' ? <span key={`${m.id}-${index}`}>{part.text}</span> : null,
-            )}
+            <div style={{
+              padding: '8px 12px',
+              background: m.role === 'user' ? 'rgba(46,168,255,0.20)' : 'rgba(127,165,211,0.10)',
+              border: `1px solid ${m.role === 'user' ? 'rgba(46,168,255,0.45)' : 'rgba(127,165,211,0.25)'}`,
+              borderRadius: 8,
+              fontSize: 12, lineHeight: 1.45,
+              color: '#E5F2FF',
+              whiteSpace: 'pre-wrap',
+            }}>
+              {m.content}
+            </div>
+            {(m.toolCalls ?? []).map((tc, j) => (
+              <ToolArtifact key={j} call={tc} onPrompt={send} />
+            ))}
           </div>
         ))}
 
@@ -388,7 +419,7 @@ export function PortCopilot() {
 
         {error && (
           <div style={{ fontSize: 10, color: '#FF7B7B', padding: '4px 0' }}>
-            {error.message}
+            {error}
           </div>
         )}
       </div>
@@ -432,4 +463,258 @@ export function PortCopilot() {
       </form>
     </div>
   );
+}
+
+/**
+ * Renders one tool-call result inline below the assistant bubble.
+ * Per-tool rendering: show_chart → <img>, generate_evidence_pdf → download
+ * link, draft_lop → collapsible markdown, get_verdict_brief → styled card,
+ * show_anomaly → measured vs expected card, cite → quote, errors → caption.
+ */
+function ToolArtifact({
+  call,
+  onPrompt,
+}: {
+  call: ToolCall;
+  onPrompt: (prompt: string) => void;
+}) {
+  const r = call.result ?? {};
+  if (r.error) {
+    const availAnoms: Array<{ rule_id: string; name: string; severity: string }> =
+      Array.isArray(r.available_anomalies) ? r.available_anomalies : [];
+    const availKinds: Array<{ kind: string; label: string; desc: string }> =
+      Array.isArray(r.available_kinds) ? r.available_kinds : [];
+    return (
+      <div style={{
+        fontSize: 11, color: '#FFD2D2',
+        padding: 10,
+        background: 'rgba(255,123,123,0.08)',
+        border: '1px solid rgba(255,123,123,0.30)',
+        borderLeft: '3px solid #FF7B7B',
+        borderRadius: 8,
+        display: 'flex', flexDirection: 'column', gap: 8,
+      }}>
+        <div>
+          ⚠ <code style={{ color: '#FFB8B8' }}>{call.name}</code> · {String(r.error)}
+        </div>
+        {r.hint && (
+          <div style={{ color: '#E5F2FF', fontSize: 11, opacity: 0.85 }}>
+            {String(r.hint)}
+          </div>
+        )}
+        {/* show_chart fallback — one-click jump to the chart that DOES work */}
+        {r.fallback_kind && (
+          <button
+            onClick={() => onPrompt(`Show the ${r.fallback_kind} chart.`)}
+            style={chipStyle('action')}>
+            ▶ {String(r.fallback_label || `Show ${r.fallback_kind}`)}
+          </button>
+        )}
+        {/* show_anomaly fallback — chips of every rule that DID fire */}
+        {availAnoms.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {availAnoms.map((a) => (
+              <button key={a.rule_id}
+                onClick={() => onPrompt(`Why ${a.rule_id}?`)}
+                title={a.name}
+                style={chipStyle(sevTone(a.severity))}>
+                {a.rule_id} · {a.severity}
+              </button>
+            ))}
+          </div>
+        )}
+        {/* show_chart "unknown kind" — chips for the valid kinds */}
+        {availKinds.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {availKinds.map((k) => (
+              <button key={k.kind}
+                onClick={() => onPrompt(`Show the ${k.kind} chart.`)}
+                title={k.desc}
+                style={chipStyle('action')}>
+                {k.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+  const assetSrc = r.asset_relpath
+    ? `/api/copilot-asset/${r.asset_relpath}`
+    : null;
+
+  if (call.name === 'show_chart' && assetSrc) {
+    return (
+      <figure style={{
+        margin: 0, padding: 6,
+        background: 'rgba(8,19,31,0.55)',
+        border: '1px solid rgba(46,168,255,0.25)',
+        borderRadius: 8,
+      }}>
+        <img src={assetSrc} alt={r.caption ?? call.name}
+             style={{ width: '100%', borderRadius: 4, display: 'block' }} />
+        {r.caption && (
+          <figcaption style={{ fontSize: 10, color: '#7FA5D3', marginTop: 4 }}>
+            {String(r.caption)}
+          </figcaption>
+        )}
+      </figure>
+    );
+  }
+  if (call.name === 'generate_evidence_pdf' && assetSrc) {
+    return (
+      <a href={assetSrc} target="_blank" rel="noopener noreferrer"
+         style={{
+           fontSize: 11, color: '#2EA8FF', textDecoration: 'none',
+           padding: '6px 10px',
+           background: 'rgba(46,168,255,0.10)',
+           border: '1px solid rgba(46,168,255,0.30)',
+           borderRadius: 6,
+           display: 'inline-flex', alignItems: 'center', gap: 6,
+         }}>
+        📄 Download evidence PDF
+      </a>
+    );
+  }
+  if (call.name === 'draft_lop' && r.body) {
+    return (
+      <details style={{
+        fontSize: 11, color: '#E5F2FF',
+        padding: '6px 10px',
+        background: 'rgba(244,194,13,0.06)',
+        border: '1px solid rgba(244,194,13,0.30)',
+        borderRadius: 6,
+      }}>
+        <summary style={{ cursor: 'pointer', color: '#F4C20D' }}>📝 Letter of Protest draft</summary>
+        <pre style={{ marginTop: 8, fontSize: 11, whiteSpace: 'pre-wrap' }}>
+          {String(r.body)}
+        </pre>
+      </details>
+    );
+  }
+  if (call.name === 'get_verdict_brief') {
+    const v = String(r.verdict ?? '—');
+    const tone =
+      v === 'SIGN' ? '#2ECC71' :
+      v === 'SIGN_WITH_NOTES' ? '#F4C20D' :
+      v === 'SIGN_WITH_LOP' ? '#FF7F0E' :
+      v === 'REFUSE_TO_SIGN' ? '#E84118' : '#9AA0A6';
+    return (
+      <div style={{
+        fontSize: 11, padding: 10,
+        background: 'rgba(8,19,31,0.55)',
+        border: `1px solid ${tone}80`,
+        borderLeft: `4px solid ${tone}`,
+        borderRadius: 8,
+        color: '#E5F2FF',
+      }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: tone }}>
+          {v.replace(/_/g, ' ')} · {r.risk_score ?? '—'}/100
+        </div>
+        {r.headline && <div style={{ marginTop: 4 }}>{String(r.headline)}</div>}
+        {Array.isArray(r.top_reasons) && r.top_reasons.length > 0 && (
+          <ul style={{ margin: '6px 0 0', paddingLeft: 16, color: '#C4D8EE' }}>
+            {r.top_reasons.map((t: any, i: number) => (
+              <li key={i}><b>{t.rule_id}</b> · {t.name} ({t.severity})</li>
+            ))}
+          </ul>
+        )}
+        {Array.isArray(r.checklist) && r.checklist.length > 0 && (
+          <div style={{ marginTop: 6 }}>
+            <div style={{ fontSize: 9, color: '#7FA5D3', letterSpacing: 0.4 }}>DO THIS NOW</div>
+            {r.checklist.map((c: any, i: number) => (
+              <div key={i} style={{ fontSize: 11 }}>⬜ {c.text}</div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+  if (call.name === 'show_anomaly') {
+    return (
+      <div style={{
+        fontSize: 11, padding: 8,
+        background: 'rgba(8,19,31,0.55)',
+        border: '1px solid rgba(127,165,211,0.30)',
+        borderRadius: 6,
+        color: '#E5F2FF',
+      }}>
+        <div style={{ fontWeight: 700 }}>
+          {String(r.rule_id ?? '—')} · {String(r.name ?? '')} ({String(r.severity ?? '')})
+        </div>
+        {r.description && <div style={{ marginTop: 4 }}>{String(r.description)}</div>}
+        {r.measured != null && r.reference != null && (
+          <div style={{ marginTop: 4, color: '#C4D8EE' }}>
+            measured <b>{String(r.measured)}{r.unit}</b> vs expected{' '}
+            <b>{String(r.reference)}{r.unit}</b>
+            {r.deviation_pct != null && ` (${Number(r.deviation_pct).toFixed(2)}%)`}
+          </div>
+        )}
+        {r.regulatory_basis && (
+          <div style={{ fontSize: 10, color: '#7FA5D3', marginTop: 4 }}>
+            {String(r.regulatory_basis)}
+          </div>
+        )}
+      </div>
+    );
+  }
+  if (call.name === 'cite') {
+    return (
+      <blockquote style={{
+        margin: 0, padding: '8px 10px',
+        fontSize: 11, color: '#E5F2FF',
+        background: 'rgba(46,168,255,0.06)',
+        borderLeft: '3px solid #2EA8FF',
+        borderRadius: 4,
+      }}>
+        <div style={{ fontWeight: 700 }}>{String(r.rule_id)} — {String(r.name)}</div>
+        <div style={{ fontSize: 10, color: '#7FA5D3', marginTop: 2 }}>{String(r.regulatory_basis)}</div>
+        <div style={{ marginTop: 4, fontStyle: 'italic' }}>{String(r.citation)}</div>
+      </blockquote>
+    );
+  }
+  // Fallback: compact JSON
+  return (
+    <details style={{
+      fontSize: 10, color: '#7FA5D3',
+      padding: '4px 8px',
+      background: 'rgba(127,165,211,0.05)',
+      border: '1px solid rgba(127,165,211,0.20)',
+      borderRadius: 6,
+    }}>
+      <summary style={{ cursor: 'pointer' }}>🔧 {call.name}</summary>
+      <pre style={{ marginTop: 6, fontSize: 10, whiteSpace: 'pre-wrap' }}>
+        {JSON.stringify(r, null, 2)}
+      </pre>
+    </details>
+  );
+}
+
+/** Tone palette for the inline chips inside tool-error cards. */
+function chipStyle(tone: 'action' | 'critical' | 'high' | 'medium' | 'low'): React.CSSProperties {
+  const palette = {
+    action:   { bg: 'rgba(46,168,255,0.15)', bd: 'rgba(46,168,255,0.45)', fg: '#E5F2FF' },
+    critical: { bg: 'rgba(232,65,24,0.18)',  bd: 'rgba(232,65,24,0.55)',  fg: '#FFD2D2' },
+    high:     { bg: 'rgba(255,127,14,0.18)', bd: 'rgba(255,127,14,0.55)', fg: '#FFE3C0' },
+    medium:   { bg: 'rgba(244,194,13,0.18)', bd: 'rgba(244,194,13,0.55)', fg: '#FFEFB8' },
+    low:      { bg: 'rgba(46,204,113,0.18)', bd: 'rgba(46,204,113,0.55)', fg: '#D4F5E1' },
+  }[tone];
+  return {
+    padding: '4px 9px',
+    background: palette.bg,
+    border: `1px solid ${palette.bd}`,
+    color: palette.fg,
+    borderRadius: 999,
+    fontSize: 10.5, fontWeight: 600,
+    cursor: 'pointer',
+  };
+}
+
+function sevTone(sev?: string): 'critical' | 'high' | 'medium' | 'low' {
+  switch ((sev || '').toUpperCase()) {
+    case 'CRITICAL': return 'critical';
+    case 'HIGH':     return 'high';
+    case 'MEDIUM':   return 'medium';
+    default:         return 'low';
+  }
 }
