@@ -311,20 +311,51 @@ function NetworkGraph({ onSupplierClick, onVesselClick }: { onSupplierClick?: (s
               </circle>
               {/* Halo */}
               <circle cx={`${a.x}%`} cy={`${a.y}%`} r={r + 7} fill={a.color} opacity={isH ? 0.18 : lit ? 0.12 : 0.06} style={{ transition: 'all 200ms' }} />
-              {/* Hex-ish main shield (rounded square approximates the dashboard "agent card") */}
+              {/* ── Cute robot avatar ── */}
+              {/* Antenna stalk */}
+              <line
+                x1={`${a.x}%`} y1={`${a.y - 3.2}%`}
+                x2={`${a.x}%`} y2={`${a.y - 4.3}%`}
+                stroke={a.color} strokeWidth={1.2} strokeLinecap="round" opacity={isH ? 1 : 0.85}
+              />
+              {/* Antenna bulb */}
+              <circle cx={`${a.x}%`} cy={`${a.y - 4.5}%`} r={isH ? 1.1 : 0.9} fill={a.color}>
+                <animate attributeName="opacity" values="1;0.35;1" dur="1.6s" begin={`${idx * 0.3}s`} repeatCount="indefinite"/>
+              </circle>
+              {/* Robot head (rounded square with chamfered look) */}
               <rect
-                x={`${a.x - 3.5}%`} y={`${a.y - 3.5}%`} width="7%" height="7%"
-                rx="6" ry="6"
+                x={`${a.x - 3.2}%`} y={`${a.y - 3}%`} width="6.4%" height="5.8%"
+                rx="14" ry="14"
                 fill={`${a.color}${isH ? '38' : '22'}`}
                 stroke={a.color}
                 strokeWidth={isH ? 2 : 1.5}
                 style={{ transition: 'all 200ms' }}
               />
-              {/* Glyph monogram */}
-              <text x={`${a.x}%`} y={`${a.y - 0.2}%`} textAnchor="middle" dominantBaseline="middle"
-                style={{ fontSize: '12px', fontWeight: 800, fill: a.color, fontFamily: "'JetBrains Mono', monospace", pointerEvents: 'none', letterSpacing: '-0.02em' }}>
-                {a.glyph}
-              </text>
+              {/* Cheek blush */}
+              <circle cx={`${a.x - 2.1}%`} cy={`${a.y + 0.4}%`} r="0.5" fill={a.color} opacity="0.45"/>
+              <circle cx={`${a.x + 2.1}%`} cy={`${a.y + 0.4}%`} r="0.5" fill={a.color} opacity="0.45"/>
+              {/* Eyes — glowing, with blink */}
+              <circle cx={`${a.x - 1.2}%`} cy={`${a.y - 0.6}%`} r="0.75" fill="#EAF6FF">
+                <animate attributeName="ry" values="0.75;0.08;0.75" keyTimes="0;0.06;0.12" dur="4s" begin={`${idx * 0.4 + 1.2}s`} repeatCount="indefinite"/>
+              </circle>
+              <circle cx={`${a.x + 1.2}%`} cy={`${a.y - 0.6}%`} r="0.75" fill="#EAF6FF">
+                <animate attributeName="ry" values="0.75;0.08;0.75" keyTimes="0;0.06;0.12" dur="4s" begin={`${idx * 0.4 + 1.2}s`} repeatCount="indefinite"/>
+              </circle>
+              {/* Eye pupils */}
+              <circle cx={`${a.x - 1.2}%`} cy={`${a.y - 0.6}%`} r="0.35" fill={a.color}/>
+              <circle cx={`${a.x + 1.2}%`} cy={`${a.y - 0.6}%`} r="0.35" fill={a.color}/>
+              {/* Smile */}
+              <path
+                d={`M ${a.x - 0.9} ${a.y + 1.1} Q ${a.x} ${a.y + 1.9} ${a.x + 0.9} ${a.y + 1.1}`}
+                transform="translate(0,0)"
+                fill="none" stroke={a.color} strokeWidth="0.6" strokeLinecap="round"
+                vectorEffect="non-scaling-stroke"
+                style={{ pointerEvents: 'none' }}
+              />
+              {/* Tiny status dot under chin */}
+              <circle cx={`${a.x}%`} cy={`${a.y + 2.6}%`} r="0.4" fill={a.color} opacity={lit ? 1 : 0.4}>
+                {lit && <animate attributeName="opacity" values="1;0.3;1" dur="1.2s" repeatCount="indefinite"/>}
+              </circle>
               {/* Agent name */}
               <text x={`${a.x}%`} y={`${a.y + 5.5}%`} textAnchor="middle"
                 style={{ fontSize: '10px', fontWeight: 700, fill: isH ? '#EAF4FF' : '#BFD7F7', fontFamily: 'sans-serif', pointerEvents: 'none', transition: 'fill 200ms', letterSpacing: '0.04em' }}>

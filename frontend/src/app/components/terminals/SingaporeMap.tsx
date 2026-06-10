@@ -7,6 +7,7 @@ import {
   statusColor,
   statusLabel,
 } from '../../../data/terminals';
+import { useActiveDeliveries, type ActiveDelivery } from '../../../lib/useActiveDeliveries';
 
 interface Props {
   /**
@@ -19,6 +20,11 @@ interface Props {
    * can use it to start fading the map out / the 3D viewer in over the dive.
    */
   onPinClick?: (t: TerminalInfo) => void;
+  /**
+   * Fired when a live-delivery pin (offshore, between barge + ship) is
+   * clicked. Host should mount the isometric session viewer.
+   */
+  onDeliveryClick?: (d: ActiveDelivery) => void;
   /**
    * Increment from the parent each time the user returns from the 3D viewer.
    * The map flies back to the Singapore overview so the pin overlay aligns
@@ -38,11 +44,15 @@ const OVERVIEW_VIEW = {
 /* CartoDB dark-matter is a free, no-key vector style with accurate SG coastline. */
 const STYLE_URL = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
 
-export function SingaporeMap({ onSelect, onPinClick, resetSignal }: Props) {
+export function SingaporeMap({ onSelect, onPinClick, onDeliveryClick, resetSignal }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
   const [diving, setDiving] = useState<string | null>(null);  // id of pin being dived-into
+
+  // Live deliveries — fed by Supabase `sessions` filtered to active rows.
+  // Each pin is placed at the centre of its anchorage geofence.
+  const { deliveries } = useActiveDeliveries();
 
   /** Fly back to the overview camera whenever the parent signals a return. */
   useEffect(() => {
@@ -182,6 +192,15 @@ export function SingaporeMap({ onSelect, onPinClick, resetSignal }: Props) {
         setHovered={setHovered}
         onSelect={dive}
         diving={diving}
+      />
+
+      {/* Live-delivery pins (offshore, anchorage-positioned) — rendered above
+          terminal pins so judges immediately spot active operations. */}
+      <DeliveryOverlay
+        map={mapRef}
+        deliveries={deliveries}
+        onClick={(d) => { if (!diving) onDeliveryClick?.(d); }}
+        muted={!!diving}
       />
 
       {/* Dive vignette — radial darkness closing in as the camera plunges */}
@@ -554,6 +573,121 @@ function PinOverlay({ map, hovered, setHovered, onSelect, diving }: PinOverlayPr
           100% { width: 320px; height: 320px; margin-left: -160px; margin-top: -160px; opacity: 0; }
         }
       `}</style>
+    </div>
+  );
+}
+
+/* ─── Live-delivery overlay ──────────────────────────────────────────────
+ * Offshore pins for sessions currently transferring fuel. Pinned at the
+ * anchorage centre. Distinct shape (diamond rotated square + ship glyph)
+ * and a flashing orange/red ring so they read as "active" not "site". */
+interface DeliveryOverlayProps {
+  map: React.RefObject<maplibregl.Map | null>;
+  deliveries: ActiveDelivery[];
+  onClick: (d: ActiveDelivery) => void;
+  muted: boolean;
+}
+
+function DeliveryOverlay({ map, deliveries, onClick, muted }: DeliveryOverlayProps) {
+  const [, force] = useState(0);
+  const [hov, setHov] = useState<string | null>(null);
+
+  useEffect(() => {
+    let raf = 0;
+    const loop = () => {
+      if (map.current) force(x => (x + 1) & 0xffff);
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [map]);
+
+  const m = map.current;
+  if (!m) return null;
+
+  function colorFor(d: ActiveDelivery): string {
+    const c = (d.risk_category || '').toUpperCase();
+    if (c === 'CRITICAL') return '#FF5656';
+    if (c === 'HIGH')     return '#FFA940';
+    if (c === 'MEDIUM' || c === 'MODERATE') return '#4A9EFF';
+    return '#00D98E';
+  }
+
+  return (
+    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 2 }}>
+      {deliveries.map((d) => {
+        const p = m.project([d.lng, d.lat]);
+        const isHov = hov === d.session_id;
+        const c = colorFor(d);
+        return (
+          <div
+            key={d.session_id}
+            style={{
+              position: 'absolute',
+              left: p.x, top: p.y,
+              transform: 'translate(-50%, -50%)',
+              pointerEvents: muted ? 'none' : 'auto',
+              opacity: muted ? 0.15 : 1,
+              cursor: 'pointer',
+              transition: 'opacity 600ms ease',
+            }}
+            onMouseEnter={() => setHov(d.session_id)}
+            onMouseLeave={() => setHov(null)}
+            onClick={() => onClick(d)}
+          >
+            <div style={{
+              position: 'absolute', left: '50%', top: '50%',
+              width: 18, height: 18, marginLeft: -9, marginTop: -9,
+              borderRadius: '50%', background: c, opacity: 0.25,
+              animation: 'bgPulse 2.2s ease-in-out infinite',
+              filter: 'blur(2px)',
+            }} />
+            <div style={{
+              position: 'relative',
+              width: isHov ? 18 : 14, height: isHov ? 18 : 14,
+              background: c,
+              transform: 'rotate(45deg)',
+              border: '2px solid #fff',
+              boxShadow: isHov ? `0 0 12px ${c}` : `0 0 6px ${c}`,
+              transition: 'all 160ms',
+            }} />
+            <div style={{
+              position: 'absolute', left: '50%', top: '50%',
+              transform: 'translate(-50%, -50%)',
+              fontSize: 8, color: '#fff', fontWeight: 800,
+              fontFamily: "'JetBrains Mono', monospace",
+              pointerEvents: 'none',
+            }}>⛴</div>
+            {isHov && (
+              <div style={{
+                position: 'absolute', left: 20, top: -8,
+                background: 'rgba(8,19,31,0.95)',
+                border: `1px solid ${c}66`,
+                borderRadius: 7,
+                padding: '8px 11px',
+                backdropFilter: 'blur(8px)',
+                minWidth: 200,
+                boxShadow: `0 6px 18px ${c}30`,
+                pointerEvents: 'none',
+              }}>
+                <div style={{ fontSize: 9, fontWeight: 700, color: c, letterSpacing: 1.1, marginBottom: 3 }}>
+                  ● LIVE DELIVERY
+                </div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#E5F2FF' }}>{d.vessel_name}</div>
+                <div style={{ fontSize: 10, color: '#8BB4D6', marginTop: 1 }}>
+                  Barge {d.barge_name ?? '—'} · {d.supplier_name ?? '—'}
+                </div>
+                <div style={{ display: 'flex', gap: 10, marginTop: 6, fontSize: 9, color: '#A8C8E8', fontFamily: "'JetBrains Mono', monospace" }}>
+                  <span>BDN {d.bdn_qty_mt ?? '—'} MT</span>
+                  <span>MFM {d.mfm_qty_mt ?? '—'} MT</span>
+                  {d.risk_score != null && <span style={{ color: c, fontWeight: 700 }}>RISK {d.risk_score}</span>}
+                </div>
+                <div style={{ fontSize: 8, color: '#3D5A75', marginTop: 4 }}>Click → isometric 3D view</div>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

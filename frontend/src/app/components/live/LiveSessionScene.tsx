@@ -17,6 +17,9 @@ interface SceneProps {
   bargeVesselName: string;
   /** Visualization toggle: outside-the-zone shows a red geofence ring + warning tag. */
   outsideGeofence: boolean;
+  /** Camera mode. Top-down is the monitoring default; iso is used when the
+   *  dashboard map dives into this delivery (`?view=iso`). */
+  cameraMode?: 'top' | 'iso';
 }
 
 const COMMERCIAL_POS: [number, number, number] = [ 60, 0, 0];
@@ -229,11 +232,12 @@ function GeofenceRing({ outside }: { outside: boolean }) {
   );
 }
 
-/* ─── Responsive top-down camera ─────────────────────────────────────────
- *  Recomputes its height on every resize so both vessels stay in horizontal
- *  AND vertical frame regardless of how wide the 3D panel is.                */
+/* ─── Responsive camera (top-down or isometric) ──────────────────────────
+ *  Top-down: monitoring view — both vessels read clearly, hose flow visible.
+ *  Isometric: dive view — used when the dashboard map navigates here with
+ *  `?view=iso`. Camera sits at 30° elevation, 45° rotation, classic iso. */
 
-function ResponsiveCamera() {
+function ResponsiveCamera({ mode = 'top' }: { mode?: 'top' | 'iso' }) {
   const { camera, size } = useThree();
   useEffect(() => {
     const persp = camera as THREE.PerspectiveCamera;
@@ -242,21 +246,33 @@ function ResponsiveCamera() {
     const distForHoriz = FRAME_HALF_WIDTH / (Math.tan(fovRad / 2) * aspect);
     const distForVert  = FRAME_HALF_DEPTH / Math.tan(fovRad / 2);
     const dist = Math.max(distForHoriz, distForVert) * 1.10;  // +10% padding
-    persp.position.set(-15, dist, 12);
+
+    if (mode === 'iso') {
+      // True isometric: 35° elevation, 45° rotation.
+      const elev = (35 * Math.PI) / 180;
+      const rot  = (45 * Math.PI) / 180;
+      const r = dist * 0.95;
+      const x = -15 + r * Math.cos(elev) * Math.cos(rot);
+      const y =       r * Math.sin(elev);
+      const z =  12 + r * Math.cos(elev) * Math.sin(rot);
+      persp.position.set(x, y, z);
+    } else {
+      persp.position.set(-15, dist, 12);
+    }
     persp.lookAt(-15, 0, 0);
     persp.updateProjectionMatrix();
-  }, [camera, size.width, size.height]);
+  }, [camera, size.width, size.height, mode]);
   return null;
 }
 
 /* ─── Scene root ──────────────────────────────────────────────────────── */
 
-function Scene({ bdnQty, mfmQty, driveGainPct, commercialVesselName, bargeVesselName, outsideGeofence }: SceneProps) {
+function Scene({ bdnQty, mfmQty, driveGainPct, commercialVesselName, bargeVesselName, outsideGeofence, cameraMode }: SceneProps) {
   const flowSpeed = bdnQty > 0 ? (mfmQty / bdnQty) * 100 : 50;
 
   return (
     <>
-      <ResponsiveCamera />
+      <ResponsiveCamera mode={cameraMode ?? 'top'} />
       <color attach="background" args={['#031424']} />
       <fog attach="fog" args={['#031424', 100, 600]} />
 

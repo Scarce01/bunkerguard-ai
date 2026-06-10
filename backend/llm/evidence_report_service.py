@@ -246,3 +246,19 @@ def store_evidence_report(report: dict, bundle_id: str, anchor_tx: str | None = 
     }).execute()
     if getattr(res, "error", None):
         raise RuntimeError(f"Failed to store evidence report: {res.error}")
+
+
+# ── PDF render (MPA-branded letterhead) ──────────────────────────────────────
+def render_evidence_report_pdf(report: dict, out_dir: str | os.PathLike | None = None):
+    """Render the final report dict as a branded PDF and return the path.
+
+    The PDF mirrors `report_json` 1:1 — no extra data fetching — so it works
+    for any stored report, including those re-loaded from Supabase. Out dir
+    defaults to `outputs/<session_id>/`."""
+    from pathlib import Path
+    from outputs.pdf_from_json import build_pdf
+
+    sid = report.get("session_id", "report")
+    base = Path(out_dir) if out_dir else Path("outputs") / str(sid)
+    out_path = base / f"EvidenceReport_{sid}.pdf"
+    return build_pdf(report, out_path)

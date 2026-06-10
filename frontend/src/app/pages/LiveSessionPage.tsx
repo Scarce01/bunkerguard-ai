@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router';
+import { useNavigate, useLocation } from 'react-router';
 import { AlertTriangle, Cpu, Activity, ChevronRight, Satellite } from 'lucide-react';
 import { useGeofence } from '../../lib/useGeofence';
 import { useState } from 'react';
@@ -10,7 +10,12 @@ const FOCUS_SESSION_ID = 'SES-2026-016'; // V03's session — the demo target
 
 export function LiveSessionPage() {
   const navigate = useNavigate();
-  const live = useLiveSessionHook(FOCUS_SESSION_ID);
+  const location = useLocation();
+  /* Query params: ?session=SES-XXX&view=iso. Defaults to demo target + top-down. */
+  const qs = new URLSearchParams(location.search);
+  const focusSessionId = qs.get('session') || FOCUS_SESSION_ID;
+  const cameraMode: 'top' | 'iso' = qs.get('view') === 'iso' ? 'iso' : 'top';
+  const live = useLiveSessionHook(focusSessionId);
   const [sessionPatch, setSessionPatch] = useState<{ status?: string }>({});
   const liveSession = live.session ? { ...live.session, ...sessionPatch } : null;
   const { geofence } = useGeofence('Eastern');
@@ -85,6 +90,7 @@ export function LiveSessionPage() {
               commercialVesselName={live.session.vessel_name}
               bargeVesselName={live.session.barge_name ?? 'ALLI'}
               outsideGeofence={outsideGeofence}
+              cameraMode={cameraMode}
             />
           )}
 

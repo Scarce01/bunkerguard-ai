@@ -209,7 +209,11 @@ export function DashboardPage() {
                   transition: 'opacity 500ms cubic-bezier(0.4,0,0.2,1), transform 500ms cubic-bezier(0.4,0,0.2,1), filter 350ms ease',
                   pointerEvents: selectedTerminal ? 'none' : 'auto',
                 }}>
-                  <SingaporeMap onSelect={setSelectedTerminal} resetSignal={mapResetSignal} />
+                  <SingaporeMap
+                    onSelect={setSelectedTerminal}
+                    resetSignal={mapResetSignal}
+                    onDeliveryClick={(d) => navigate(`/live?session=${encodeURIComponent(d.session_id)}&view=iso`)}
+                  />
                 </div>
                 <div style={{
                   position: 'absolute', inset: 0,

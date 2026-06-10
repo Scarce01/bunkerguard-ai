@@ -13,6 +13,7 @@ import * as THREE from 'three';
 import { TerminalInfo, statusColor, statusLabel, VESSELS_BY_TERMINAL, VESSEL_GLB, VesselSpot } from '../../../data/terminals';
 import { ArrowLeft, Loader2, RotateCcw, Ship } from 'lucide-react';
 import { useVesselSession } from '../../../lib/useVesselSession';
+import { useVesselStatus, type VesselStatusRow } from '../../../lib/useVesselStatus';
 
 interface Props {
   terminal: TerminalInfo;
@@ -174,8 +175,186 @@ function sunStateForHour(h: number): SunState {
 /* ─── Vessel HUD (data-driven from Supabase via useVesselSession) ───── */
 
 function VesselHud({ terminal, vessel }: { terminal: TerminalInfo; vessel: VesselSpot }) {
-  const { session, risk, supplier, loading } = useVesselSession(vessel.sessionId);
-  const hasSession = !!session;
+  // Real-time operational state of the vessel itself — preferred source.
+  const { status: vstatus, loading: statusLoading } = useVesselStatus(vessel.id);
+
+  // Pull the upcoming-or-current delivery session ONLY to enrich the HUD
+  // with "next customer" info — never to drive the headline state.
+  const sessionId = vstatus?.next_session_id ?? vessel.sessionId;
+  const { session, risk, supplier, loading: sessionLoading } = useVesselSession(sessionId);
+
+  // Resolve the headline state. Vessel-status table wins; fall back to the
+  // in-app metadata (`vessel.status`) so unseeded demos still render.
+  const headlineState: VesselStatusRow['current_status'] =
+       vstatus?.current_status
+    ?? (vessel.status === 'loading'  ? 'LOADING'
+      : vessel.status === 'transit'  ? 'EN_ROUTE'
+      : vessel.status === 'idle'     ? 'IDLE'
+      : 'STANDBY');
+
+  const isDelivering = headlineState === 'DELIVERING';
+
+  return (
+    <div style={{
+      position: 'absolute', top: 12, left: 12,
+      background: 'rgba(8,19,31,0.92)',
+      border: '1px solid rgba(46,168,255,0.45)',
+      padding: '12px 16px', borderRadius: 8,
+      backdropFilter: 'blur(10px)', color: '#E5F2FF',
+      minWidth: 280, maxWidth: 340,
+    }}>
+      {/* Header */}
+      <div style={{ fontSize: 9, fontWeight: 700, color: '#2EA8FF', letterSpacing: 1.5, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <Ship size={11} /> {terminal.id} · {vessel.id}
+      </div>
+      <div style={{ fontSize: 15, fontWeight: 700, marginTop: 2 }}>{vessel.name}</div>
+      <div style={{ fontSize: 10, color: '#8BB4D6', marginTop: 1 }}>
+        {vstatus?.berth_label
+          ? `${vstatus.berth_label} · ${terminal.name}`
+          : `Berthed at ${terminal.name}`}
+      </div>
+
+      {/* Headline state pill */}
+      <StatusPill state={headlineState} />
+
+      {statusLoading && !vstatus && (
+        <div style={{ fontSize: 10, color: '#7FA5D3', marginTop: 6 }}>Loading vessel status…</div>
+      )}
+
+      {/* ── PORT-STATE PANEL (LOADING / IDLE / STANDBY / EN_ROUTE / MAINTENANCE) ── */}
+      {!isDelivering && (
+        <PortStatePanel
+          vstatus={vstatus}
+          fallbackCargo={vessel.cargo}
+          state={headlineState}
+        />
+      )}
+
+      {/* ── DELIVERY PANEL (only when this vessel is actively transferring) ── */}
+      {isDelivering && sessionId && (
+        <DeliveryPanel
+          sessionId={sessionId}
+          session={session}
+          risk={risk}
+          supplier={supplier}
+          loading={sessionLoading}
+        />
+      )}
+
+      {/* Next-job preview — shown when not delivering and a session is queued */}
+      {!isDelivering && (vstatus?.next_session_id || sessionId) && (
+        <NextJobPreview
+          customer={vstatus?.next_customer ?? session?.vessel_name ?? null}
+          sessionId={vstatus?.next_session_id ?? sessionId ?? null}
+          etd={vstatus?.etd_local ?? null}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ─── HUD sub-components ──────────────────────────────────────────────── */
+
+function StatusPill({ state }: { state: VesselStatusRow['current_status'] }) {
+  const map: Record<VesselStatusRow['current_status'], { c: string; l: string }> = {
+    IDLE:        { c: '#7FA5D3', l: 'IDLE · awaiting nomination' },
+    LOADING:     { c: '#FFA940', l: 'LOADING · fuel intake' },
+    STANDBY:     { c: '#4A9EFF', l: 'STANDBY · ready to depart' },
+    EN_ROUTE:    { c: '#A36CFF', l: 'EN-ROUTE · transit' },
+    DELIVERING:  { c: '#00D98E', l: 'DELIVERING · live transfer' },
+    MAINTENANCE: { c: '#FF5656', l: 'MAINTENANCE · out of service' },
+  };
+  const { c, l } = map[state];
+  return (
+    <div style={{
+      marginTop: 8, padding: '5px 9px', borderRadius: 4,
+      background: `${c}1A`, border: `1px solid ${c}55`,
+      fontSize: 10, fontWeight: 700, color: c, letterSpacing: 0.8,
+    }}>
+      {l}
+    </div>
+  );
+}
+
+function PortStatePanel({
+  vstatus, fallbackCargo, state,
+}: {
+  vstatus: VesselStatusRow | null;
+  fallbackCargo?: string;
+  state: VesselStatusRow['current_status'];
+}) {
+  // Parse fallback cargo string like "VLSFO 380 cSt · 480 MT"
+  const fallback = (() => {
+    if (!fallbackCargo) return { grade: null, loaded: null };
+    const m = fallbackCargo.match(/^(.+?)\s*·\s*([\d.]+)\s*MT$/);
+    return m ? { grade: m[1], loaded: Number(m[2]) } : { grade: fallbackCargo, loaded: null };
+  })();
+
+  const grade   = vstatus?.cargo_grade       ?? fallback.grade   ?? '—';
+  const loaded  = vstatus?.cargo_loaded_mt   ?? fallback.loaded;
+  const cap     = vstatus?.cargo_capacity_mt;
+  const rate    = vstatus?.loading_rate_m3h;
+  const etd     = vstatus?.etd_local;
+  const crewOk  = vstatus?.crew_verified;
+  const mpaOk   = vstatus?.mpa_tag_verified;
+  const action  = vstatus?.recommended_action;
+  const event   = vstatus?.last_event;
+
+  return (
+    <>
+      <div style={{ display: 'flex', gap: 14, marginTop: 10 }}>
+        <HudStat label="CARGO" value={grade} mono={false} />
+        <HudStat
+          label="ONBOARD"
+          value={loaded != null ? (cap ? `${loaded} / ${cap} MT` : `${loaded} MT`) : '—'}
+          mono
+        />
+      </div>
+      {state === 'LOADING' && (
+        <div style={{ display: 'flex', gap: 14, marginTop: 8 }}>
+          <HudStat label="LOAD RATE" value={rate ? `${rate} m³/h` : '—'} mono />
+          <HudStat label="ETD" value={etd ?? '—'} mono />
+        </div>
+      )}
+      {state === 'EN_ROUTE' && etd && (
+        <div style={{ display: 'flex', gap: 14, marginTop: 8 }}>
+          <HudStat label="ETA" value={etd} mono />
+        </div>
+      )}
+      {(crewOk != null || mpaOk != null) && (
+        <div style={{ display: 'flex', gap: 14, marginTop: 8, fontSize: 10 }}>
+          <VerifyTag label="Crew"    ok={!!crewOk} />
+          <VerifyTag label="MPA tag" ok={!!mpaOk} />
+        </div>
+      )}
+      {event && (
+        <div style={{ marginTop: 8, fontSize: 10, color: '#A8C8E8', lineHeight: 1.45 }}>
+          <span style={{ color: '#5A8AB4', fontWeight: 600 }}>Last event · </span>{event}
+        </div>
+      )}
+      {action && (
+        <div style={{
+          marginTop: 8, padding: '6px 8px', borderRadius: 4,
+          background: 'rgba(46,168,255,0.08)', border: '1px solid rgba(46,168,255,0.25)',
+          fontSize: 10, color: '#BFD7F7',
+        }}>
+          <span style={{ color: '#2EA8FF', fontWeight: 700, letterSpacing: 0.6 }}>RECOMMENDED · </span>
+          {action}
+        </div>
+      )}
+    </>
+  );
+}
+
+function DeliveryPanel({
+  sessionId, session, risk, supplier, loading,
+}: {
+  sessionId: string;
+  session: any;
+  risk: any;
+  supplier: any;
+  loading: boolean;
+}) {
   const riskColor = !risk
     ? '#7FA5D3'
     : risk.risk_category === 'CRITICAL' ? '#FF5656'
@@ -187,97 +366,97 @@ function VesselHud({ terminal, vessel }: { terminal: TerminalInfo; vessel: Vesse
                  : '#00D98E';
 
   return (
-    <div style={{
-      position: 'absolute', top: 12, left: 12,
-      background: 'rgba(8,19,31,0.92)',
-      border: '1px solid rgba(46,168,255,0.45)',
-      padding: '12px 16px', borderRadius: 8,
-      backdropFilter: 'blur(10px)', color: '#E5F2FF',
-      minWidth: 280, maxWidth: 320,
-    }}>
-      <div style={{ fontSize: 9, fontWeight: 700, color: '#2EA8FF', letterSpacing: 1.5, display: 'flex', alignItems: 'center', gap: 6 }}>
-        <Ship size={11} /> {terminal.id} · {vessel.id}
+    <>
+      <div style={{
+        marginTop: 10, paddingTop: 8,
+        borderTop: '1px solid rgba(127,165,211,0.18)',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      }}>
+        <span style={{ fontSize: 9, fontWeight: 700, color: '#7FA5D3', letterSpacing: 1.1 }}>
+          ACTIVE SESSION
+        </span>
+        <span style={{ fontSize: 9, color: '#3D5A75', fontFamily: "'JetBrains Mono', monospace" }}>
+          {sessionId}
+        </span>
       </div>
-      <div style={{ fontSize: 15, fontWeight: 700, marginTop: 2 }}>{vessel.name}</div>
-      <div style={{ fontSize: 10, color: '#8BB4D6', marginTop: 1 }}>
-        Berthed at {terminal.name}
-      </div>
-
-      {vessel.sessionId && (
+      {loading && (
+        <div style={{ fontSize: 10, color: '#7FA5D3', marginTop: 6 }}>Loading live session…</div>
+      )}
+      {session && (
         <>
-          <div style={{
-            marginTop: 10, paddingTop: 8,
-            borderTop: '1px solid rgba(127,165,211,0.18)',
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          }}>
-            <span style={{ fontSize: 9, fontWeight: 700, color: '#7FA5D3', letterSpacing: 1.1 }}>
-              ACTIVE SESSION
-            </span>
-            <span style={{ fontSize: 9, color: '#3D5A75', fontFamily: "'JetBrains Mono', monospace" }}>
-              {vessel.sessionId}
-            </span>
+          <div style={{ display: 'flex', gap: 14, marginTop: 8 }}>
+            <HudStat label="RECEIVING" value={session.vessel_name} mono={false} />
+            <HudStat label="BARGE" value={session.barge_name ?? '—'} mono={false} />
           </div>
-
-          {loading && (
-            <div style={{ fontSize: 10, color: '#7FA5D3', marginTop: 6 }}>Loading live session…</div>
+          <div style={{ display: 'flex', gap: 14, marginTop: 8 }}>
+            <HudStat label="SUPPLIER" value={supplier?.name?.split(' ').slice(-3).join(' ') ?? session.supplier_name ?? '—'} mono={false} />
+            <HudStat label="GRADE" value={session.fuel_grade ?? '—'} mono={false} />
+          </div>
+          <div style={{ display: 'flex', gap: 14, marginTop: 8 }}>
+            <HudStat label="BDN" value={`${session.bdn_qty_mt ?? '—'} MT`} mono />
+            <HudStat label="MFM" value={`${session.mfm_qty_mt ?? '—'} MT`} mono />
+            <HudStat label="ΔPCT" value={`${(session.dev_pct ?? 0).toFixed(2)}%`} mono color={devColor} />
+          </div>
+          {risk && (
+            <div style={{
+              marginTop: 8, padding: '6px 8px',
+              background: 'rgba(8,19,31,0.6)',
+              border: `1px solid ${riskColor}44`,
+              borderRadius: 4,
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            }}>
+              <span style={{ fontSize: 9, fontWeight: 700, color: '#7FA5D3', letterSpacing: 1.1 }}>
+                RISK · {risk.risk_category}
+              </span>
+              <span style={{ fontSize: 14, fontWeight: 700, color: riskColor, fontFamily: "'JetBrains Mono', monospace" }}>
+                {risk.final_risk_score}/100
+              </span>
+            </div>
           )}
-
-          {hasSession && session && (
-            <>
-              <div style={{ display: 'flex', gap: 14, marginTop: 8 }}>
-                <HudStat label="RECEIVING" value={session.vessel_name} mono={false} />
-                <HudStat label="BARGE" value={session.barge_name ?? '—'} mono={false} />
-              </div>
-              <div style={{ display: 'flex', gap: 14, marginTop: 8 }}>
-                <HudStat label="SUPPLIER" value={supplier?.name?.split(' ').slice(-3).join(' ') ?? session.supplier_name ?? '—'} mono={false} />
-                <HudStat label="GRADE" value={session.fuel_grade ?? '—'} mono={false} />
-              </div>
-              <div style={{ display: 'flex', gap: 14, marginTop: 8 }}>
-                <HudStat label="BDN" value={`${session.bdn_qty_mt ?? '—'} MT`} mono />
-                <HudStat label="MFM" value={`${session.mfm_qty_mt ?? '—'} MT`} mono />
-                <HudStat label="ΔPCT" value={`${(session.dev_pct ?? 0).toFixed(2)}%`} mono color={devColor} />
-              </div>
-              {risk && (
-                <div style={{
-                  marginTop: 8, padding: '6px 8px',
-                  background: 'rgba(8,19,31,0.6)',
-                  border: `1px solid ${riskColor}44`,
-                  borderRadius: 4,
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                }}>
-                  <span style={{ fontSize: 9, fontWeight: 700, color: '#7FA5D3', letterSpacing: 1.1 }}>
-                    RISK · {risk.risk_category}
-                  </span>
-                  <span style={{
-                    fontSize: 14, fontWeight: 700, color: riskColor,
-                    fontFamily: "'JetBrains Mono', monospace",
-                  }}>
-                    {risk.final_risk_score}/100
-                  </span>
-                </div>
-              )}
-              {risk?.verdict && (
-                <div style={{
-                  marginTop: 6,
-                  fontSize: 10, fontWeight: 700,
-                  letterSpacing: 0.8, color: riskColor,
-                }}>
-                  VERDICT · {String(risk.verdict).replace(/_/g, ' ')}
-                </div>
-              )}
-            </>
+          {risk?.verdict && (
+            <div style={{ marginTop: 6, fontSize: 10, fontWeight: 700, letterSpacing: 0.8, color: riskColor }}>
+              VERDICT · {String(risk.verdict).replace(/_/g, ' ')}
+            </div>
           )}
         </>
       )}
+    </>
+  );
+}
 
-      {!vessel.sessionId && (
-        <div style={{
-          fontSize: 9, color: '#3D5A75', marginTop: 10, letterSpacing: 0.8, fontWeight: 600,
-        }}>
-          IDLE · NO ACTIVE SESSION
+function NextJobPreview({
+  customer, sessionId, etd,
+}: { customer: string | null; sessionId: string | null; etd: string | null }) {
+  if (!customer && !sessionId) return null;
+  return (
+    <div style={{
+      marginTop: 10, paddingTop: 8,
+      borderTop: '1px dashed rgba(127,165,211,0.22)',
+    }}>
+      <div style={{ fontSize: 9, fontWeight: 700, color: '#5A8AB4', letterSpacing: 1.1, marginBottom: 4 }}>
+        NEXT JOB (QUEUED)
+      </div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, fontSize: 11 }}>
+        <span style={{ color: '#BFD7F7' }}>→ {customer ?? 'tbc'}</span>
+        {etd && <span style={{ color: '#5A8AB4', fontFamily: "'JetBrains Mono', monospace" }}>ETD {etd}</span>}
+      </div>
+      {sessionId && (
+        <div style={{ fontSize: 9, color: '#3D5A75', fontFamily: "'JetBrains Mono', monospace", marginTop: 2 }}>
+          {sessionId}
         </div>
       )}
     </div>
+  );
+}
+
+function VerifyTag({ label, ok }: { label: string; ok: boolean }) {
+  const c = ok ? '#00D98E' : '#FF5656';
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+      <span style={{ width: 6, height: 6, borderRadius: '50%', background: c }} />
+      <span style={{ color: '#A8C8E8' }}>{label}</span>
+      <span style={{ color: c, fontWeight: 700 }}>{ok ? '✓' : '✗'}</span>
+    </span>
   );
 }
 
