@@ -29,6 +29,19 @@ sys.path.insert(0, str(_ROOT))
 from anomaly import detect
 from contracts import RULE_REGISTRY, Severity
 from ingest import load_sessions
+from llm.bdn_ingest_service import BDNIngestResult, analyze_bdn_upload
+from llm.bunkering_orchestrator import (
+    finalize_session,
+    get_session,
+    list_active,
+    start_session,
+    tick,
+)
+from llm import supabase_sync as _supabase_sync
+
+# Wire orchestrator → Supabase if creds are set. No-op otherwise, so the
+# Streamlit demo still runs on a laptop without a project.
+_SUPABASE_ON = _supabase_sync.install()
 from pipeline.attack import inject_cappuccino, inject_short_delivery, inject_meter_tamper
 from pipeline.billing import compute_fee
 from pipeline.narrative import generate_lop_draft, generate_master_brief
@@ -81,6 +94,94 @@ st.sidebar.markdown(
 
 sessions = _load_all()
 ids = [s.session_id for s in sessions]
+
+# ------------------------------------------------------------------ BDN upload
+# Officers can drop a real BDN (PDF / scan / phone photo) here and have Claude
+# classify + extract — replaces the CSV-hardcoded ingestion path for ad-hoc
+# uploads. The result is shown inline; nothing is persisted to disk.
+with st.sidebar.expander("📄 Upload BDN (Claude analysis)", expanded=False):
+    st.caption(
+        "Drop a Bunker Delivery Note (PDF, PNG, JPG, or pasted text). "
+        "Claude will verify it is a BDN and extract typed fields."
+    )
+    if _SUPABASE_ON:
+        st.caption("✅ Supabase sync on — uploads land in `bdn_uploads`, "
+                   "sessions start `PENDING` (un-bunked).")
+    else:
+        st.caption("ℹ️ Supabase env vars not set — running local-only.")
+    uploaded = st.file_uploader(
+        "BDN document",
+        type=["pdf", "png", "jpg", "jpeg", "webp", "txt"],
+        accept_multiple_files=False,
+        key="bdn_upload",
+    )
+    hint = st.text_input(
+        "Officer note (optional)",
+        placeholder="e.g. received from PetroSpark at Eastern Anchorage 2026-05-10",
+        key="bdn_upload_hint",
+    )
+    if uploaded is not None and st.button("Analyse with Claude", key="bdn_upload_run"):
+        with st.spinner("Asking Claude to classify + extract…"):
+            result = analyze_bdn_upload(
+                uploaded.getvalue(),
+                filename=uploaded.name,
+                mime_type=uploaded.type or None,
+                text_hint=hint or None,
+            )
+        st.session_state["bdn_upload_result"] = result.to_dict()
+
+    res = st.session_state.get("bdn_upload_result")
+    if res:
+        if res.get("error"):
+            st.error(f"Ingest failed: {res['error']}")
+        elif res.get("is_bdn"):
+            conf = float(res.get("confidence", 0.0)) * 100
+            st.success(f"✅ Identified as **BDN** ({conf:.0f}% confidence)")
+        else:
+            conf = float(res.get("confidence", 0.0)) * 100
+            st.warning(
+                f"⚠️ Not a BDN — looks like **{res.get('document_type', 'unknown')}** "
+                f"({conf:.0f}% confidence)"
+            )
+        if res.get("reasoning"):
+            st.caption(res["reasoning"])
+        if res.get("red_flags"):
+            st.markdown("**Red flags:**")
+            for flag in res["red_flags"]:
+                st.markdown(f"- {flag}")
+        if res.get("is_bdn") and res.get("extracted"):
+            st.markdown("**Extracted fields**")
+            st.json(res["extracted"], expanded=False)
+
+            # Promote a verified BDN into a live BUNKERING session. The
+            # orchestrator dedupes on bdn_ref so re-clicking is safe.
+            if st.button("🚢 Start bunkering session", key="bdn_upload_start"):
+                ingest = BDNIngestResult(
+                    is_bdn=res.get("is_bdn", False),
+                    confidence=float(res.get("confidence") or 0.0),
+                    reasoning=res.get("reasoning", ""),
+                    document_type=res.get("document_type", "BDN"),
+                    red_flags=list(res.get("red_flags") or []),
+                    extracted=dict(res.get("extracted") or {}),
+                )
+                try:
+                    live = start_session(ingest)
+                    st.session_state["live_session_id"] = live.session_id
+                    st.success(
+                        f"Session **{live.session_id}** created · "
+                        f"target {live.bdn_qty_mt:.1f} MT · "
+                        f"status **UN-BUNKED** (PENDING). "
+                        f"First MFM packet flips it to BUNKERING."
+                    )
+                except ValueError as e:
+                    st.error(str(e))
+        usage = res.get("usage") or {}
+        if usage:
+            st.caption(
+                f"Tokens — in: {usage.get('input_tokens', 0)} · "
+                f"out: {usage.get('output_tokens', 0)} · "
+                f"model: {usage.get('model', '?')}"
+            )
 
 mode = st.sidebar.radio(
     "Mode",
@@ -176,11 +277,96 @@ if case_meta is not None:
 
 _headline_row()
 
+
+# ------------------------------------------------------------------ live bunkering
+def _render_live_bunkering() -> None:
+    """Show every BUNKERING session created from an uploaded BDN.
+
+    Each session is rendered with a real-time progress bar (0 → BDN target),
+    a 'Tick +30s' control to advance the simulated MFM stream, and a 'Finalize'
+    button. Once a session reaches its BDN target the orchestrator auto-flips
+    it to COMPLETED.
+    """
+    actives = list_active()
+    pinned = st.session_state.get("live_session_id")
+    pinned_session = get_session(pinned) if pinned else None
+    # Merge: pinned (even if just completed) + currently-active list.
+    shown = {s.session_id: s for s in actives}
+    if pinned_session is not None:
+        shown.setdefault(pinned_session.session_id, pinned_session)
+    if not shown:
+        return
+
+    st.markdown("### 🚢 Live bunkering (from uploaded BDN)")
+    for sid, live in shown.items():
+        with st.container(border=True):
+            top = st.columns([2.2, 1, 1, 1])
+            top[0].markdown(
+                f"**{live.session_id}** · {live.vessel_name} "
+                f"(IMO {live.vessel_imo or '—'})  \n"
+                f"Supplier {live.supplier_name} · Barge {live.barge_name} · "
+                f"BDN {live.bdn_ref}"
+            )
+            badge_color = {
+                "PENDING":    "#f59e0b",   # amber — un-bunked, awaiting first packet
+                "BUNKERING":  "#2ca02c",   # green — flowing
+                "COMPLETED":  "#3b82f6",
+                "HALTED":     "#d62728",
+            }.get(live.status, "#9e9e9e")
+            badge_label = "UN-BUNKED" if live.status == "PENDING" else live.status
+            top[1].markdown(
+                f"<div style='padding:6px 10px;border-radius:8px;"
+                f"background:{badge_color}1a;border:1px solid {badge_color};"
+                f"color:{badge_color};font-weight:600;text-align:center'>"
+                f"{badge_label}</div>",
+                unsafe_allow_html=True,
+            )
+            top[2].metric("Delivered", f"{live.mfm_qty_mt:,.2f} MT",
+                          f"target {live.bdn_qty_mt:,.1f}")
+            top[3].metric("Progress", f"{live.progress_pct:.1f}%",
+                          f"{live.deviation_pct:+.2f}% dev")
+
+            st.progress(min(1.0, live.progress_pct / 100.0))
+
+            ctrl = st.columns([1, 1, 1, 3])
+            if live.is_active:
+                if ctrl[0].button("⏭ Tick +30s", key=f"tick_{sid}"):
+                    tick(sid, dt_seconds=30)
+                    st.rerun()
+                if ctrl[1].button("⏩ Tick +5 min", key=f"tick5_{sid}"):
+                    tick(sid, dt_seconds=300)
+                    st.rerun()
+                if ctrl[2].button("⛔ Halt", key=f"halt_{sid}"):
+                    finalize_session(sid, halted=True)
+                    st.rerun()
+            else:
+                ctrl[0].caption(f"Finished at {live.end_time or '—'}")
+
+            if live.mfm_stream:
+                import pandas as _pd
+                df = _pd.DataFrame([
+                    {"t": p.timestamp, "cumulative_mt": p.cumulative_mt,
+                     "flow_rate_mt_h": p.flow_rate_mt_h}
+                    for p in live.mfm_stream
+                ])
+                st.line_chart(df.set_index("t")[["cumulative_mt"]], height=160)
+
+    st.divider()
+
+
+_render_live_bunkering()
+
+from copilot_chat import render_copilot_chat  # noqa: E402
+
 # ------------------------------------------------------------------ tabs
-tab_overview, tab_stream, tab_anom, tab_evidence, tab_lop, tab_audit, tab_billing = st.tabs(
-    ["📊 Overview", "📈 MFM Stream", "🚨 Anomalies", "🗂️ Evidence",
+(tab_copilot, tab_overview, tab_stream, tab_anom, tab_evidence, tab_lop,
+ tab_audit, tab_billing) = st.tabs(
+    ["💬 Copilot", "📊 Overview", "📈 MFM Stream", "🚨 Anomalies", "🗂️ Evidence",
      "📝 LOP & Brief", "🔐 Audit & Chain", "💰 Recovery Fee"]
 )
+
+with tab_copilot:
+    render_copilot_chat(session, report, pkg)
 
 # ---------------------------------------------------------------- overview
 with tab_overview:

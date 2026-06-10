@@ -35,6 +35,8 @@ from typing import Optional
 # anthropic is imported lazily inside _call_claude_vision to avoid a hard
 # dependency at import time (lets normalise.py and tests load without it).
 
+from dataclasses import dataclass, field
+
 from contracts.stage1_session_input import SessionBDN
 from ingestion.normalise import (
     clean_str,
@@ -59,9 +61,13 @@ _SYSTEM = (
 _EXTRACTION_PROMPT = """Extract all available fields from this Bunker Delivery Note image.
 
 Return a JSON object with these exact keys (use null for any field that is
-illegible, absent, or explicitly marked as omitted):
+illegible, absent, or explicitly marked as omitted). The first three keys
+are about your own read of the document — be honest about uncertainty.
 
 {
+  "is_bdn":              "<true if this is a marine Bunker Delivery Note, false otherwise>",
+  "parsing_confidence":  "<YOUR self-rated confidence in the extraction as a decimal in [0, 1] — based on image legibility, field coverage, and visible damage. NOT a constant.>",
+  "parsing_notes":       "<one short sentence explaining the confidence: what's clear, what's missing or smudged>",
   "bdn_ref":        "<BDN number / reference>",
   "vessel":         "<vessel name>",
   "imo":            "<IMO number — digits only>",
@@ -95,6 +101,10 @@ Important extraction rules:
 - Signatures: true if the signature line/box appears filled, stamped, or ticked.
 - If a field is circled, struck out, or says 'omitted', set it to null.
 - BDN ref: look for 'BDN Number', 'B/N No.', 'Doc No.', or a prominent reference number.
+- parsing_confidence MUST reflect the actual document. A pristine, fully-filled
+  BDN with a clear digital QR can be 0.95+. A faded, partially-cropped scan
+  with several illegible fields should be 0.6 or lower. NEVER return a fixed
+  value like 0.98 unless that genuinely matches what you saw.
 """
 
 
@@ -246,3 +256,127 @@ def extract_raw_fields(image_path: str) -> dict:
     """
     image_data, media_type = _load_image_as_base64(image_path)
     return _call_claude_vision(image_data, media_type)
+
+
+# ── Structured result for upload UI (real confidence, not hardcoded) ──────────
+
+
+@dataclass
+class BDNExtractionResult:
+    """What the upload UI should bind to.
+
+    Replaces the frontend-hardcoded "98%" parsing-confidence pill with a real
+    number sourced from the model + a structural field-coverage check.
+    """
+    bdn: SessionBDN
+    is_bdn: bool
+    parsing_confidence: float       # 0..1, model-reported (clamped, derated)
+    parsing_notes: str
+    field_coverage: float           # 0..1, share of critical fields populated
+    vessel_identified: bool
+    supplier_identified: bool
+    quantity_extracted: bool
+    fuel_grade_extracted: bool
+    raw: dict = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        return {
+            "is_bdn": self.is_bdn,
+            "parsing_confidence": self.parsing_confidence,
+            "parsing_confidence_pct": round(self.parsing_confidence * 100, 1),
+            "parsing_notes": self.parsing_notes,
+            "field_coverage": self.field_coverage,
+            "checks": {
+                "vessel_identified":     self.vessel_identified,
+                "supplier_identified":   self.supplier_identified,
+                "quantity_extracted":    self.quantity_extracted,
+                "fuel_grade_extracted":  self.fuel_grade_extracted,
+            },
+            "extracted_bdn": self.bdn.__dict__ if hasattr(self.bdn, "__dict__") else dict(self.bdn),
+            "raw": self.raw,
+        }
+
+
+# Keys whose presence the upload UI prominently displays as ticks.
+_CRITICAL_FIELDS = (
+    "vessel", "imo", "supplier", "qty_mt", "grade",
+    "port", "date", "bdn_ref", "density_15c", "sulphur_pct",
+)
+
+
+def _field_present(raw: dict, key: str) -> bool:
+    v = raw.get(key)
+    if v is None:
+        return False
+    if isinstance(v, str) and v.strip().upper() in ("", "UNKNOWN", "N/A", "NULL"):
+        return False
+    if isinstance(v, (int, float)) and float(v) == 0.0 and key in ("qty_mt", "density_15c"):
+        # Quantity / density of literal zero almost always means "not read".
+        return False
+    return True
+
+
+def _compose_confidence(raw: dict) -> tuple[float, float, str]:
+    """Return (parsing_confidence, field_coverage, notes).
+
+    We combine two signals:
+      * `parsing_confidence` self-reported by Claude (clamped to [0, 1]).
+      * `field_coverage` — fraction of critical fields actually populated.
+
+    Final confidence is the MIN of the two — a model that claims 0.99 but
+    failed to read half the fields should not display 99%. This is exactly
+    the case the user flagged: a constant 98% regardless of what was on
+    screen.
+    """
+    try:
+        model_conf = float(raw.get("parsing_confidence", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        model_conf = 0.0
+    model_conf = max(0.0, min(1.0, model_conf))
+
+    present = sum(1 for k in _CRITICAL_FIELDS if _field_present(raw, k))
+    coverage = present / len(_CRITICAL_FIELDS)
+
+    final = min(model_conf, coverage) if (model_conf and coverage) else (model_conf or coverage)
+    notes = (raw.get("parsing_notes") or "").strip()
+    if not notes:
+        notes = f"{present}/{len(_CRITICAL_FIELDS)} critical fields extracted."
+    return round(final, 3), round(coverage, 3), notes
+
+
+def _build_result(raw: dict) -> BDNExtractionResult:
+    is_bdn = bool(raw.get("is_bdn", True))  # legacy path: assume yes if absent
+    conf, coverage, notes = _compose_confidence(raw)
+    bdn = _dict_to_bdn(raw) if is_bdn else _dict_to_bdn({})
+    return BDNExtractionResult(
+        bdn=bdn,
+        is_bdn=is_bdn,
+        parsing_confidence=conf,
+        parsing_notes=notes,
+        field_coverage=coverage,
+        vessel_identified=_field_present(raw, "vessel"),
+        supplier_identified=_field_present(raw, "supplier") or _field_present(raw, "customer"),
+        quantity_extracted=_field_present(raw, "qty_mt"),
+        fuel_grade_extracted=_field_present(raw, "grade"),
+        raw=raw,
+    )
+
+
+def extract_bdn_with_meta(image_bytes: bytes, media_type: str = "image/jpeg") -> BDNExtractionResult:
+    """Upload-flow entry point: returns the BDN + real parsing confidence.
+
+    Use this from the upload API instead of `extract_bdn_from_bytes` so the
+    frontend can render an honest "Parsing confidence: X%" pill and the
+    per-field ✓ ticks (Vessel / Supplier / Quantity / Fuel Grade) without
+    making numbers up.
+    """
+    image_data = base64.standard_b64encode(image_bytes).decode("utf-8")
+    raw = _call_claude_vision(image_data, media_type)
+    return _build_result(raw)
+
+
+def extract_bdn_with_meta_from_path(image_path: str) -> BDNExtractionResult:
+    """File-path variant of `extract_bdn_with_meta`."""
+    image_data, media_type = _load_image_as_base64(image_path)
+    raw = _call_claude_vision(image_data, media_type)
+    return _build_result(raw)
