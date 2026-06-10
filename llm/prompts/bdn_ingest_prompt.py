@@ -40,6 +40,41 @@ B) EXTRACT — if and only if is_bdn=true, pull the typed fields BunkerGuard
 
 Rules:
 - Respond with the JSON object the schema asks for. No prose, no fences.
+- Output a SINGLE top-level object with these keys exactly:
+    is_bdn, confidence, reasoning, document_type, red_flags, extracted
+  All BDN field values MUST live inside `extracted` — never at the top
+  level. Even if some fields are null, the `extracted` object must be
+  present with every field key. An example shape (values illustrative):
+    {
+      "is_bdn": true,
+      "confidence": 0.93,
+      "reasoning": "Has BDN number, vessel IMO, qty in MT, fuel grade…",
+      "document_type": "BDN",
+      "red_flags": [],
+      "extracted": {
+        "bdn_ref": "1111",
+        "vessel_name": "XPRESS NUPTSE",
+        "vessel_imo": "9678630",
+        "supplier_name": "Lanka Marine Services (Pvt) Ltd",
+        "barge_name": "LMN",
+        "barge_imo": null,
+        "port": "Colombo",
+        "delivery_date": "2019-08-11",
+        "time_start": "21:42",
+        "time_end": "23:30",
+        "grade": "HSFO RMG 380",
+        "qty_mt": 299.913,
+        "density_15c_kg_m3": 984.8,
+        "viscosity_50c_cst": 358.5,
+        "sulphur_pct": 2.81,
+        "flash_point_c": 94,
+        "biofuel_pct": 0,
+        "sample_seal": "LMS 014251",
+        "supplier_signed": true,
+        "officer_signed": true,
+        "ebdn_status": "MISSING"
+      }
+    }
 - `confidence` ∈ [0,1] is YOUR self-rated confidence in the classification.
 - Quantities are metric tonnes. Density is kg/m³ at 15°C. Viscosity is cSt
   at 50°C. Sulphur and biofuel are percentages (not fractions).

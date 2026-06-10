@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "marine-bunkering-fe",
+      "runtimeExecutable": "npm.cmd",
+      "runtimeArgs": ["run", "dev", "--prefix", "D:\\next-bunker-fe"],
+      "port": 5173
+    },
+    {
+      "name": "bunker-api",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "uvicorn", "llm.api:app", "--host", "127.0.0.1", "--port", "8787"],
+      "port": 8787
+    }
+  ]
+}

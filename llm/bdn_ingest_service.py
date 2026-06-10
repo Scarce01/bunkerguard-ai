@@ -44,6 +44,7 @@ class BDNIngestResult:
     extracted: dict[str, Any] = field(default_factory=dict)
     usage: dict[str, Any] = field(default_factory=dict)
     error: Optional[str] = None
+    raw_response: Optional[str] = None  # First 4 KB of Claude's text, for debugging
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -172,25 +173,35 @@ def analyze_bdn_upload(
         "cache_control": {"type": "ephemeral"},
     }]
 
+    # Note: not using output_config/json_schema here — the BDN schema has
+    # ~21 nullable fields, which the structured-output endpoint rejects as
+    # "too many parameters with union types". The prompt is explicit about
+    # the JSON shape and `_try_parse_json` strips fences, so plain JSON
+    # mode is enough.
     try:
         response = client.messages.create(
             model=MODEL,
             max_tokens=MAX_TOKENS,
             system=system_block,
             messages=[{"role": "user", "content": user_content}],
-            output_config={
-                "format": {
-                    "type": "json_schema",
-                    "schema": _sanitize_schema(BDN_INGEST_SCHEMA),
-                },
-            },
         )
     except Exception as e:  # network/auth/quota all bubble up here
         log.exception("bdn_ingest_call_failed")
+        msg = str(e)
+        # Most-common operator error: ANTHROPIC_API_KEY missing. The SDK
+        # raises TypeError("Could not resolve authentication method...").
+        # Surface a clear, actionable reason so the drawer can render it.
+        if "Could not resolve authentication" in msg or "api_key" in msg.lower():
+            reason = (
+                "ANTHROPIC_API_KEY not configured on the backend. "
+                "Set it in the server environment, restart uvicorn, and try again."
+            )
+        else:
+            reason = f"Claude call failed: {type(e).__name__}: {msg[:200]}"
         return BDNIngestResult(
             is_bdn=False, confidence=0.0,
-            reasoning=f"Claude call failed: {type(e).__name__}",
-            document_type="unknown", error=f"{type(e).__name__}: {e}",
+            reasoning=reason,
+            document_type="unknown", error=f"{type(e).__name__}: {msg}",
         )
 
     text = "".join(b.text for b in response.content if getattr(b, "type", None) == "text")
@@ -212,16 +223,79 @@ def analyze_bdn_upload(
             usage=usage, error="json_parse_failed",
         )
 
-    extracted = parsed.get("extracted") or {}
+    # Claude sometimes nests the fields under `extracted`, sometimes returns
+    # them at the top level alongside `is_bdn`. Accept either shape so a real
+    # BDN scan never silently drops its values just because of a key path.
+    extracted = parsed.get("extracted")
+    if not isinstance(extracted, dict) or not extracted:
+        extracted = {}
+        _FIELD_KEYS = {
+            "bdn_ref", "vessel_name", "vessel_imo", "supplier_name",
+            "barge_name", "barge_imo", "port", "delivery_date",
+            "time_start", "time_end", "grade", "qty_mt",
+            "density_15c_kg_m3", "viscosity_50c_cst", "sulphur_pct",
+            "flash_point_c", "biofuel_pct", "sample_seal",
+            "supplier_signed", "officer_signed", "ebdn_status",
+        }
+        # Common alias keys Claude likes to use — normalise into our schema.
+        _ALIASES = {
+            "vessel": "vessel_name",
+            "imo": "vessel_imo",
+            "supplier": "supplier_name",
+            "barge": "barge_name",
+            "barge_imo_number": "barge_imo",
+            "date": "delivery_date",
+            "delivery_date_iso": "delivery_date",
+            "fuel_grade": "grade",
+            "quantity_mt": "qty_mt",
+            "quantity": "qty_mt",
+            "density": "density_15c_kg_m3",
+            "density_15c": "density_15c_kg_m3",
+            "viscosity": "viscosity_50c_cst",
+            "viscosity_50c": "viscosity_50c_cst",
+            "sulphur": "sulphur_pct",
+            "sulfur_pct": "sulphur_pct",
+            "flash_point": "flash_point_c",
+            "biofuel": "biofuel_pct",
+        }
+        for k, v in parsed.items():
+            tgt = _ALIASES.get(k, k)
+            if tgt in _FIELD_KEYS:
+                extracted[tgt] = v
+
+    # Some Claude responses use 'explanation' / 'justification' / 'classification_reasoning'
+    # instead of 'reasoning'; accept any of them so the UI is never blank.
+    reasoning = (
+        parsed.get("reasoning")
+        or parsed.get("explanation")
+        or parsed.get("justification")
+        or parsed.get("classification_reasoning")
+        or parsed.get("notes")
+        or ""
+    )
+    reasoning = str(reasoning).strip()
+    if not reasoning:
+        # Last resort: build a sentence from what we *do* have so the
+        # frontend pill never displays an empty rationale.
+        verdict = "is a BDN" if parsed.get("is_bdn") else "is NOT a BDN"
+        dtype = parsed.get("document_type", "unknown")
+        reasoning = f"Claude classified the upload: {verdict} (document_type={dtype})."
+
     result = BDNIngestResult(
         is_bdn=bool(parsed.get("is_bdn", False)),
         confidence=float(parsed.get("confidence", 0.0) or 0.0),
-        reasoning=str(parsed.get("reasoning", "")).strip(),
+        reasoning=reasoning,
         document_type=str(parsed.get("document_type", "unknown")).strip() or "unknown",
         red_flags=list(parsed.get("red_flags") or []),
         extracted=extracted,
         usage=usage,
+        raw_response=(text or "")[:4096],
     )
+    if result.is_bdn and not any(v for v in extracted.values() if v not in (None, "", 0)):
+        log.warning(
+            "bdn_extracted_empty",
+            extra={"raw_preview": (text or "")[:500]},
+        )
 
     # Log every analysis — including is_bdn=false rejections — to Supabase
     # so the frontend can render Claude's real reasoning + confidence

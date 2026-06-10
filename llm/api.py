@@ -19,7 +19,37 @@ Env:
 from __future__ import annotations
 
 import logging
+import os
+from pathlib import Path
 from typing import Optional
+
+
+def _bootstrap_env() -> None:
+    """Load ANTHROPIC_API_KEY (and friends) from the usual .env locations.
+
+    The Next.js frontend already stores the key in `.env.local`; loading the
+    same file from the Python backend means the operator doesn't have to
+    duplicate it. We search a small, explicit list rather than walking the
+    tree, and skip silently when nothing is found.
+    """
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return
+    try:
+        from dotenv import load_dotenv  # type: ignore
+    except ImportError:
+        return
+    here = Path(__file__).resolve().parent.parent
+    candidates = [
+        here / ".env",
+        here / ".env.local",
+        here.parent / "next-bunker-fe" / ".env.local",
+    ]
+    for p in candidates:
+        if p.is_file():
+            load_dotenv(p, override=False)
+
+
+_bootstrap_env()
 
 try:
     from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -76,6 +106,7 @@ class UploadResponse(BaseModel):
     extracted: dict
     usage: dict
     persisted: bool                      # True if a bdn_uploads row was written
+    raw_response: Optional[str] = None   # Claude's raw text — for debugging
 
 
 class StartSessionResponse(BaseModel):
@@ -251,6 +282,7 @@ def _serialize_upload(result: BDNIngestResult) -> dict:
         "extracted": extracted,
         "usage": result.usage or {},
         "persisted": _SUPABASE_ACTIVE,
+        "raw_response": result.raw_response,
     }
 
 
