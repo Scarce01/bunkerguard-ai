@@ -35,169 +35,6 @@ interface PortCopilotProps {
   sessionId?: string;
 }
 
-function CopilotLauncher({ onOpen }: { onOpen: () => void }) {
-  return (
-    <button
-      className="bunkerguard-copilot-trigger"
-      onClick={onOpen}
-      aria-label="Open BunkerGuard Copilot"
-      style={{
-        position: 'fixed', bottom: 22, right: 22, zIndex: 60,
-        width: 92, height: 92,
-        padding: 0,
-        borderRadius: '50%',
-        background: 'transparent',
-        border: 0,
-        cursor: 'pointer',
-        display: 'grid',
-        placeItems: 'center',
-      }}
-      title="BunkerGuard Copilot — Cmd/Ctrl + K"
-    >
-      <style>{`
-        @keyframes copilotOrbitClockwise {
-          to { transform: rotate(360deg); }
-        }
-        @keyframes copilotOrbitCounterClockwise {
-          to { transform: rotate(-360deg); }
-        }
-        @keyframes copilotOrbBreathe {
-          0%, 100% {
-            opacity: 0.82;
-            transform: scale(0.96);
-            box-shadow:
-              0 0 10px rgba(74, 200, 255, 0.24),
-              0 0 24px rgba(74, 200, 255, 0.08);
-          }
-          50% {
-            opacity: 1;
-            transform: scale(1);
-            box-shadow:
-              0 0 14px rgba(74, 200, 255, 0.34),
-              0 0 30px rgba(74, 200, 255, 0.12);
-          }
-        }
-        .bunkerguard-copilot-trigger:focus-visible .copilot-core {
-          outline: 2px solid rgba(74, 200, 255, 0.72);
-          outline-offset: 4px;
-        }
-        .bunkerguard-copilot-trigger:hover .copilot-core {
-          border-color: rgba(74, 200, 255, 0.34);
-          background: linear-gradient(145deg, rgba(18, 43, 65, 0.92), rgba(7, 20, 34, 0.96));
-          box-shadow:
-            inset 0 1px 0 rgba(255, 255, 255, 0.08),
-            0 10px 32px rgba(0, 0, 0, 0.38),
-            0 0 24px rgba(74, 200, 255, 0.10);
-        }
-        @media (prefers-reduced-motion: reduce) {
-          .copilot-orbit,
-          .copilot-orb {
-            animation: none !important;
-          }
-        }
-      `}</style>
-
-      <svg
-        className="copilot-orbit"
-        aria-hidden="true"
-        viewBox="0 0 92 92"
-        style={{
-          position: 'absolute',
-          inset: 0,
-          width: 92,
-          height: 92,
-          animation: 'copilotOrbitClockwise 28s linear infinite',
-          transformOrigin: '50% 50%',
-          pointerEvents: 'none',
-        }}
-      >
-        <circle
-          cx="46"
-          cy="46"
-          r="42"
-          fill="none"
-          stroke="rgba(74, 200, 255, 0.18)"
-          strokeWidth="1"
-          strokeDasharray="6 10"
-          strokeLinecap="round"
-        />
-      </svg>
-
-      <svg
-        className="copilot-orbit"
-        aria-hidden="true"
-        viewBox="0 0 92 92"
-        style={{
-          position: 'absolute',
-          inset: 0,
-          width: 92,
-          height: 92,
-          animation: 'copilotOrbitCounterClockwise 36s linear infinite',
-          transformOrigin: '50% 50%',
-          pointerEvents: 'none',
-        }}
-      >
-        <circle
-          cx="46"
-          cy="46"
-          r="37"
-          fill="none"
-          stroke="rgba(74, 200, 255, 0.08)"
-          strokeWidth="1"
-          strokeDasharray="3 18"
-          strokeLinecap="round"
-        />
-      </svg>
-
-      <span
-        className="copilot-core"
-        style={{
-          width: 76,
-          height: 76,
-          borderRadius: '50%',
-          background: 'linear-gradient(145deg, rgba(15, 36, 56, 0.90), rgba(6, 18, 31, 0.96))',
-          border: '1px solid rgba(74, 200, 255, 0.22)',
-          boxShadow: `
-            inset 0 1px 0 rgba(255, 255, 255, 0.07),
-            inset 0 -10px 24px rgba(0, 0, 0, 0.20),
-            0 10px 30px rgba(0, 0, 0, 0.34),
-            0 0 20px rgba(74, 200, 255, 0.07)
-          `,
-          backdropFilter: 'blur(18px) saturate(135%)',
-          WebkitBackdropFilter: 'blur(18px) saturate(135%)',
-          display: 'grid',
-          placeItems: 'center',
-          transition: 'background 220ms ease, border-color 220ms ease, box-shadow 220ms ease',
-        }}
-      >
-        <span
-          className="copilot-orb"
-          style={{
-            width: 38,
-            height: 38,
-            borderRadius: '50%',
-            background: `
-              radial-gradient(circle at 38% 32%,
-                rgba(220, 248, 255, 0.96) 0%,
-                rgba(100, 211, 255, 0.72) 18%,
-                rgba(45, 150, 205, 0.34) 48%,
-                rgba(10, 42, 66, 0.18) 72%,
-                rgba(5, 20, 34, 0) 100%)
-            `,
-            border: '1px solid rgba(135, 225, 255, 0.16)',
-            display: 'grid',
-            placeItems: 'center',
-            color: '#BCEEFF',
-            animation: 'copilotOrbBreathe 4.8s ease-in-out infinite',
-          }}
-        >
-          <Bot size={17} strokeWidth={1.6} />
-        </span>
-      </span>
-    </button>
-  );
-}
-
 export function PortCopilot({ sessionId: sessionIdProp }: PortCopilotProps = {}) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMsg[]>([]);
@@ -326,7 +163,37 @@ export function PortCopilot({ sessionId: sessionIdProp }: PortCopilotProps = {})
   }
 
   if (!open) {
-    return <CopilotLauncher onOpen={() => setOpen(true)} />;
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        style={{
+          position: 'fixed', bottom: 22, right: 22, zIndex: 60,
+          padding: '10px 14px',
+          borderRadius: 28,
+          background: 'linear-gradient(135deg, rgba(46,168,255,0.95), rgba(111,91,255,0.95))',
+          border: '1px solid rgba(255,255,255,0.18)',
+          boxShadow: '0 6px 24px rgba(46,168,255,0.45)',
+          color: '#fff',
+          cursor: 'pointer',
+          display: 'flex', alignItems: 'center', gap: 8,
+          fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
+          backdropFilter: 'blur(10px)',
+        }}
+        title="BunkerGuard Copilot — Cmd/Ctrl + K"
+      >
+        <Bot size={18} />
+        <span>Copilot</span>
+        <kbd style={{
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: 9.5, fontWeight: 700,
+          padding: '1px 5px',
+          background: 'rgba(255,255,255,0.18)',
+          border: '1px solid rgba(255,255,255,0.25)',
+          borderRadius: 3,
+          color: '#fff',
+        }}>⌘K</kbd>
+      </button>
+    );
   }
 
   const railStyle: React.CSSProperties = isWide
