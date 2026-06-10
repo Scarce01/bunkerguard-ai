@@ -324,6 +324,50 @@ not simulate processing with timers.
 Exa findings are supplementary. They are persisted as supporting evidence and
 do not directly modify the deterministic Stage 3 score.
 
+## Agent Orchestration
+
+The five agents (Surveyor, Investigator, Compliance, Decision, Chief Engineer)
+are coordinated by an **Orchestrator** that plans the run, dispatches the
+specialists, runs Exa enrichment in parallel with the deterministic engines,
+and streams every step to the UI for inspection.
+
+| Phase | Agent | Tool surface | Output |
+|---|---|---|---|
+| Plan | Orchestrator | `bedrock.claude-sonnet-4-6` | Dispatch plan for the run |
+| Extract | Surveyor Agent | OCR + structured extraction | Typed `SessionInput`, field confidence |
+| Detect | Investigator Agent | `anomaly_engine_v3` (Stage 2) | Anomaly findings with regulatory citations |
+| Score | Investigator Agent | `risk_engine_v3` (Stage 3) | Weighted risk score, category, floors |
+| Enrich | Investigator Agent | `exa.search` | Supplier, vessel, barge, port intelligence |
+| Verify | Compliance Agent | `evidence_check` | Signatures, MPA licence, fuel spec, MFM integrity |
+| Decide | Decision Agent | `policy_engine_v3` | `SIGN` / `SIGN_WITH_NOTES` / `SIGN_WITH_LOP` / `REFUSE_TO_SIGN` |
+| Sign-off | Chief Engineer | `human_in_the_loop` | Audit-grade verdict locked to evidence package |
+
+### Orchestrator Trace
+
+The trace is exposed as an **Agent Activity** tab on `/sessions/:sessionId`
+and as a panel at the top of the right rail on `/live`. Each event row
+contains:
+
+- `timestamp`
+- `agent`
+- `action`
+- `tool_used`
+- `input_summary`
+- `output_summary`
+- `confidence`
+- `status` (`COMPLETED`, `SKIPPED`, `PENDING_HUMAN`, `FAILED`)
+
+When the optional `agent_traces` Supabase table is present, the persisted
+trace is rendered verbatim. Otherwise the trace is derived in the browser
+from the same `sessions`, `bdn_records`, `risk_scores`, `anomalies`,
+`enrichment_results`, and `evidence_reports` rows the pipeline already
+wrote — so the panel is demo-safe even without the migration.
+
+**Determinism boundary:** The Orchestrator and specialists narrate and
+coordinate; they never decide the verdict. The final SIGN / REVIEW /
+REFUSE rule remains the policy engine in `backend/risk/` and `backend/policy/`,
+which is what auditors and regulators inspect.
+
 ## Anomaly and Risk Engines
 
 ### Stage 2
