@@ -234,6 +234,9 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
                 and os.environ.get("BEDROCK_MODEL_ID")
             )
             openrouter_configured = bool(os.environ.get("OPENROUTER_API_KEY"))
+            vercel_ai_gateway_configured = bool(
+                os.environ.get("AI_GATEWAY_API_KEY")
+            )
             return _response(
                 200,
                 {
@@ -244,6 +247,7 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
                     "s3_bucket": os.environ.get("S3_BUCKET"),
                     "exa_configured": bool(os.environ.get("EXA_API_KEY")),
                     "bedrock_configured": bedrock_configured,
+                    "vercel_ai_gateway_configured": vercel_ai_gateway_configured,
                     "openrouter_configured": openrouter_configured,
                     "active_provider": os.environ.get(
                         "ACTIVE_PROVIDER",
@@ -256,6 +260,10 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
                         else "unavailable",
                     ),
                     "bedrock_model": os.environ.get("BEDROCK_MODEL_ID"),
+                    "vercel_ai_gateway_model": os.environ.get(
+                        "VERCEL_AI_GATEWAY_MODEL",
+                        "anthropic/claude-sonnet-4.6",
+                    ),
                     "openrouter_model": os.environ.get(
                         "OPENROUTER_MODEL", "anthropic/claude-sonnet-4.6"
                     ),

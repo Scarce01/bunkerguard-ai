@@ -75,7 +75,9 @@ AWS_DEFAULT_REGION="$REGION" aws cloudformation deploy \
     "AnthropicApiKey=${ANTHROPIC_API_KEY:-}" \
     "OpenRouterApiKey=${OPENROUTER_API_KEY:-}" \
     "OpenRouterModel=${OPENROUTER_MODEL:-anthropic/claude-sonnet-4.6}" \
-    "ActiveProvider=${ACTIVE_PROVIDER:-bedrock_with_openrouter_fallback}" \
+    "AiGatewayApiKey=${AI_GATEWAY_API_KEY:-}" \
+    "VercelAiGatewayModel=${VERCEL_AI_GATEWAY_MODEL:-anthropic/claude-sonnet-4.6}" \
+    "ActiveProvider=${ACTIVE_PROVIDER:-bedrock_with_vercel_ai_gateway_and_openrouter_fallback}" \
     "CorsOrigin=${CORS_ORIGIN:-https://bunkerguard-ai.vercel.app}"
 
 AWS_DEFAULT_REGION="$REGION" aws cloudformation describe-stacks \

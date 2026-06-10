@@ -11,6 +11,7 @@
 
 Env:
     LLM_PROVIDER, AWS_REGION, BEDROCK_MODEL_ID, ANTHROPIC_API_KEY,
+    AI_GATEWAY_API_KEY, VERCEL_AI_GATEWAY_MODEL,
     OPENROUTER_API_KEY, OPENROUTER_MODEL.
 """
 from __future__ import annotations
@@ -34,8 +35,10 @@ log = logging.getLogger("bunkerguard.llm")
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 OPENROUTER_MODEL = "anthropic/claude-sonnet-4.6"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+VERCEL_AI_GATEWAY_MODEL = "anthropic/claude-sonnet-4.6"
+VERCEL_AI_GATEWAY_URL = "https://ai-gateway.vercel.sh/v1/chat/completions"
 MAX_TOKENS = 4096
-JSON_RETRIES = 2  # JSON-parse-error retries only; SDK handles network retries
+JSON_RETRIES = 1  # JSON-parse-error retries only; SDK handles network retries
 
 # JSON-Schema keywords the structured-outputs *raw* API rejects with a 400.
 # The SDK strips these automatically, but only inside ``messages.parse()`` /
@@ -214,7 +217,7 @@ def _call_openrouter(
         method="POST",
     )
     try:
-        with urllib_request.urlopen(req, timeout=90) as response:
+        with urllib_request.urlopen(req, timeout=8) as response:
             data = json.loads(response.read().decode("utf-8"))
     except urllib_error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")[:500]
@@ -237,6 +240,95 @@ def _call_openrouter(
         model,
         "openrouter",
         data.get("usage", {}),
+    )
+
+
+def _call_vercel_ai_gateway(
+    system_prompt: str,
+    messages: list[dict[str, str]],
+    *,
+    max_tokens: int,
+) -> dict[str, Any]:
+    api_key = os.environ.get("AI_GATEWAY_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("AI_GATEWAY_API_KEY is not configured")
+
+    model = os.environ.get(
+        "VERCEL_AI_GATEWAY_MODEL",
+        VERCEL_AI_GATEWAY_MODEL,
+    ).strip()
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            *[
+                {"role": message["role"], "content": message.get("content", "")}
+                for message in messages
+                if message.get("role") in {"user", "assistant"}
+            ],
+        ],
+        "max_tokens": max_tokens,
+        "temperature": 0.1,
+    }
+    req = urllib_request.Request(
+        os.environ.get("VERCEL_AI_GATEWAY_URL", VERCEL_AI_GATEWAY_URL),
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib_request.urlopen(req, timeout=8) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except urllib_error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:500]
+        raise RuntimeError(
+            f"Vercel AI Gateway request failed with HTTP {exc.code}: {detail}"
+        ) from exc
+
+    choices = data.get("choices") or []
+    if not choices:
+        raise RuntimeError("Vercel AI Gateway returned no response choices")
+    content = choices[0].get("message", {}).get("content", "")
+    if isinstance(content, list):
+        content = "".join(
+            part.get("text", "")
+            for part in content
+            if isinstance(part, dict) and part.get("type") == "text"
+        )
+    return _provider_result(
+        str(content).strip(),
+        str(data.get("model") or model),
+        "vercel_ai_gateway",
+        data.get("usage", {}),
+    )
+
+
+def _call_fallback_chain(
+    system_prompt: str,
+    messages: list[dict[str, str]],
+    *,
+    max_tokens: int,
+) -> dict[str, Any]:
+    if os.environ.get("AI_GATEWAY_API_KEY", "").strip():
+        try:
+            return _call_vercel_ai_gateway(
+                system_prompt,
+                messages,
+                max_tokens=max_tokens,
+            )
+        except Exception as exc:
+            log.warning(
+                "vercel_ai_gateway_unavailable_falling_back error=%s: %s",
+                type(exc).__name__,
+                exc,
+            )
+    return _call_openrouter(
+        system_prompt,
+        messages,
+        max_tokens=max_tokens,
     )
 
 
@@ -272,7 +364,7 @@ def call_text(
                 type(exc).__name__,
                 exc,
             )
-            return _call_openrouter(
+            return _call_fallback_chain(
                 system_prompt,
                 messages,
                 max_tokens=max_tokens,

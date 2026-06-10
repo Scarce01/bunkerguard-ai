@@ -52,6 +52,82 @@ def test_bedrock_access_denied_falls_back_to_openrouter(monkeypatch) -> None:
     call.assert_called_once()
 
 
+def test_bedrock_falls_back_to_vercel_ai_gateway_before_openrouter(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "bedrock")
+    monkeypatch.setenv("BEDROCK_MODEL_ID", "bedrock-test-model")
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "gateway-key")
+    bedrock = type(
+        "BedrockClient",
+        (),
+        {"converse": lambda *args, **kwargs: (_ for _ in ()).throw(
+            _client_error("AccessDeniedException")
+        )},
+    )()
+    gateway = {
+        "text": "Gateway response",
+        "provider_used": "vercel_ai_gateway",
+        "model": "anthropic/claude-sonnet-4.6",
+        "provider": "vercel_ai_gateway",
+        "model_id": "anthropic/claude-sonnet-4.6",
+        "_usage": {"provider": "vercel_ai_gateway", "model": "anthropic/claude-sonnet-4.6"},
+    }
+
+    with (
+        patch.object(claude_client, "_get_bedrock_client", return_value=bedrock),
+        patch.object(
+            claude_client,
+            "_call_vercel_ai_gateway",
+            return_value=gateway,
+        ) as gateway_call,
+        patch.object(claude_client, "_call_openrouter") as openrouter_call,
+    ):
+        result = claude_client.call_text(
+            "system",
+            [{"role": "user", "content": "hello"}],
+        )
+
+    assert result["provider_used"] == "vercel_ai_gateway"
+    gateway_call.assert_called_once()
+    openrouter_call.assert_not_called()
+
+
+def test_gateway_failure_falls_back_to_openrouter(monkeypatch) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "bedrock")
+    monkeypatch.setenv("BEDROCK_MODEL_ID", "bedrock-test-model")
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "gateway-key")
+    bedrock = type(
+        "BedrockClient",
+        (),
+        {"converse": lambda *args, **kwargs: (_ for _ in ()).throw(
+            _client_error("AccessDeniedException")
+        )},
+    )()
+    openrouter = {"provider_used": "openrouter"}
+
+    with (
+        patch.object(claude_client, "_get_bedrock_client", return_value=bedrock),
+        patch.object(
+            claude_client,
+            "_call_vercel_ai_gateway",
+            side_effect=RuntimeError("gateway unavailable"),
+        ),
+        patch.object(
+            claude_client,
+            "_call_openrouter",
+            return_value=openrouter,
+        ) as openrouter_call,
+    ):
+        result = claude_client.call_text(
+            "system",
+            [{"role": "user", "content": "hello"}],
+        )
+
+    assert result["provider_used"] == "openrouter"
+    openrouter_call.assert_called_once()
+
+
 def test_bedrock_inference_profile_error_falls_back_to_openrouter(monkeypatch) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "bedrock")
     monkeypatch.setenv("BEDROCK_MODEL_ID", "bedrock-test-model")

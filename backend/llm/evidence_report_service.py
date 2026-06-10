@@ -25,18 +25,15 @@ NOTE FOR INTEGRATOR:
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 from datetime import datetime, timezone
 from typing import Any
 
 from carbon import calculate_carbon_exposure
-from .claude_client import call_claude
-from .prompts.evidence_report_prompt import (
-    EVIDENCE_REPORT_SYSTEM,
-    EvidenceReportInput,
-    build_evidence_report_prompt,
-)
+from .claude_client import call_text
+from .prompts.evidence_report_prompt import EvidenceReportInput
 
 log = logging.getLogger("bunkerguard.llm.evidence_report")
 
@@ -199,17 +196,117 @@ def fetch_evidence_report_input(session_id: str) -> EvidenceReportInput:
 # ── Claude call ──────────────────────────────────────────────────────────────
 
 
-def call_claude_for_report(payload: EvidenceReportInput) -> dict:
-    user_prompt = build_evidence_report_prompt(payload)
-    # call_claude already returns a parsed dict when given the JSON-mode contract
-    # used elsewhere in this package. If your `claude_client.call_claude`
-    # signature differs, adjust this single line.
-    return call_claude(
-        EVIDENCE_REPORT_SYSTEM,
-        user_prompt,
-        json_schema=None,
-        max_tokens=1200,
+def _pick(row: dict, *names: str, default: Any = None) -> Any:
+    for name in names:
+        if row.get(name) is not None:
+            return row[name]
+    return default
+
+
+def _sign_off_status(risk_package: dict) -> str:
+    verdict = str(risk_package.get("recommended_verdict") or "").upper()
+    category = str(risk_package.get("risk_category") or "").upper()
+    if "REFUSE" in verdict or category in {"CRITICAL", "HIGH"}:
+        return "REFUSE_TO_SIGN"
+    if "LOP" in verdict:
+        return "SIGN_WITH_LOP"
+    if "NOTE" in verdict or category == "MEDIUM":
+        return "SIGN_WITH_NOTES"
+    return "SIGN"
+
+
+def _fallback_narrative(payload: EvidenceReportInput) -> dict[str, Any]:
+    session = payload.get("session", {})
+    risk_package = payload.get("risk_package", {})
+    anomalies = payload.get("anomalies", [])
+    score = risk_package.get("final_risk_score", 0)
+    category = risk_package.get("risk_category", "UNKNOWN")
+    verdict = risk_package.get("recommended_verdict", "REVIEW")
+    top = anomalies[0] if anomalies else None
+    concern = (
+        f" The leading finding is {top.get('rule_id') or top.get('rule_name')}: "
+        f"{top.get('description')}."
+        if top else ""
     )
+    return {
+        "executive_summary": (
+            f"Session {session.get('session_id')} has risk score {score}/100 "
+            f"({category}) with {len(anomalies)} recorded anomaly findings.{concern}"
+        ),
+        "ai_narrative": (
+            f"The deterministic risk engine recommends {verdict}. "
+            "The officer should validate the cited BDN, MFM, and compliance evidence "
+            "before sign-off."
+        ),
+        "recommended_actions": [
+            f"1. Apply the deterministic recommendation: {verdict}.",
+            "2. Review each evidence item against the original BDN and MFM records.",
+            "3. Record the final officer decision and supporting notes.",
+        ],
+    }
+
+
+def call_claude_for_report(payload: EvidenceReportInput) -> dict:
+    """Generate only concise narrative fields; all factual fields stay deterministic."""
+    fallback = _fallback_narrative(payload)
+    prompt_data = {
+        "session": payload.get("session", {}),
+        "risk_package": payload.get("risk_package", {}),
+        "anomalies": payload.get("anomalies", [])[:5],
+        "quantity": {
+            "bdn_qty_mt": payload.get("session", {}).get("bdn_qty_mt"),
+            "mfm_qty_mt": payload.get("session", {}).get("mfm_qty_mt"),
+        },
+    }
+    prompt = (
+        "Return only compact JSON with keys executive_summary, ai_narrative, "
+        "recommended_actions. Use at most 2 sentences per text field and at most "
+        "3 numbered actions. Do not invent facts or numbers.\n"
+        + json.dumps(prompt_data, default=str, separators=(",", ":"))
+    )
+    try:
+        response = call_text(
+            "You write concise maritime evidence-report summaries from supplied facts.",
+            [{"role": "user", "content": prompt}],
+            max_tokens=260,
+        )
+    except Exception as exc:
+        log.warning("evidence_report_llm_unavailable: %s", exc)
+        return {
+            **fallback,
+            "_usage": {
+                "provider": "backend_fallback",
+                "model": "deterministic",
+                "input_tokens": 0,
+                "output_tokens": 0,
+            },
+        }
+
+    text = response.get("text", "").strip()
+    if text.startswith("```"):
+        text = text.removeprefix("```json").removeprefix("```").strip()
+        text = text.removesuffix("```").strip()
+    try:
+        parsed = json.loads(text)
+    except (TypeError, json.JSONDecodeError):
+        log.warning("evidence_report_json_parse_failed")
+        return {**fallback, "_usage": response.get("_usage", {})}
+
+    if not isinstance(parsed, dict):
+        return {**fallback, "_usage": response.get("_usage", {})}
+    actions = parsed.get("recommended_actions")
+    return {
+        "executive_summary": str(
+            parsed.get("executive_summary") or fallback["executive_summary"]
+        ),
+        "ai_narrative": str(parsed.get("ai_narrative") or fallback["ai_narrative"]),
+        "recommended_actions": (
+            [str(item) for item in actions[:3]]
+            if isinstance(actions, list) and actions
+            else fallback["recommended_actions"]
+        ),
+        "_usage": response.get("_usage", {}),
+    }
 
 
 # ── Main entry points ────────────────────────────────────────────────────────
@@ -222,11 +319,117 @@ def generate_evidence_report(session_id: str) -> dict:
     hash/signing layer before Supabase storage (mirrors the TS contract).
     """
     payload = fetch_evidence_report_input(session_id)
-    report = call_claude_for_report(payload)
-
     now = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     risk_package = payload.get("risk_package", {})
     session = payload.get("session", {})
+    bdn = payload.get("bdn", {})
+    anomalies = payload.get("anomalies", [])
+    narrative = call_claude_for_report(payload)
+
+    bdn_qty = float(session.get("bdn_qty_mt") or 0)
+    mfm_qty = float(session.get("mfm_qty_mt") or 0)
+    discrepancy_mt = round(mfm_qty - bdn_qty, 3)
+    discrepancy_pct = round(
+        (discrepancy_mt / bdn_qty) * 100 if bdn_qty else 0,
+        3,
+    )
+    spot_price = float(payload.get("vlsfo_spot_price_usd_per_mt") or 585)
+    evidence_items = [
+        {
+            "type": "anomaly",
+            "rule_id": anomaly.get("rule_id"),
+            "severity": anomaly.get("severity"),
+            "description": anomaly.get("description"),
+            "source": anomaly.get("evidence_source") or "Stage 2 anomaly engine",
+        }
+        for anomaly in anomalies
+    ]
+    evidence_items.extend([
+        {
+            "type": "document",
+            "source": "BDN",
+            "reference": _pick(bdn, "bdn_ref", "reference", default=""),
+            "quantity_mt": bdn_qty,
+        },
+        {
+            "type": "measurement",
+            "source": "MFM",
+            "quantity_mt": mfm_qty,
+            "readings_count": payload.get("mfm_summary", {}).get("readings_count", 0),
+        },
+        {
+            "type": "risk",
+            "source": "Stage 3 risk engine",
+            "score": risk_package.get("final_risk_score", 0),
+            "category": risk_package.get("risk_category", "UNKNOWN"),
+        },
+    ])
+
+    report = {
+        "report_id": f"RPT-{session_id}-{now}",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "session_id": session_id,
+        "header": {
+            "vessel_name": session.get("vessel_name"),
+            "vessel_imo": session.get("vessel_imo"),
+            "supplier_name": session.get("supplier_name"),
+            "supplier_licence": _pick(bdn, "mpa_licence", "licence", default=""),
+            "barge_name": _pick(bdn, "barge_name", "barge", default=""),
+            "port": session.get("port"),
+            "delivery_date": _pick(bdn, "delivery_date", "date", default=""),
+            "delivery_start": session.get("delivery_start"),
+            "delivery_end": session.get("delivery_end"),
+            "fuel_grade": session.get("fuel_grade"),
+            "bdn_reference": _pick(bdn, "bdn_ref", "reference", default=""),
+        },
+        "quantity_comparison": {
+            "bdn_declared_mt": bdn_qty,
+            "mfm_measured_mt": mfm_qty,
+            "discrepancy_mt": discrepancy_mt,
+            "discrepancy_pct": discrepancy_pct,
+            "financial_impact_usd": round(abs(discrepancy_mt) * spot_price),
+            "vlsfo_spot_price_per_mt": spot_price,
+        },
+        "anomaly_summary": {
+            "total_anomalies": len(anomalies),
+            "critical_count": sum(a.get("severity") == "CRITICAL" for a in anomalies),
+            "high_count": sum(a.get("severity") == "HIGH" for a in anomalies),
+            "medium_count": sum(a.get("severity") == "MEDIUM" for a in anomalies),
+            "anomalies": anomalies,
+        },
+        "risk_assessment": {
+            "final_score": risk_package.get("final_risk_score", 0),
+            "risk_category": risk_package.get("risk_category", "UNKNOWN"),
+            "recommended_verdict": risk_package.get("recommended_verdict", "REVIEW"),
+            "similar_incidents_30d": risk_package.get("similar_incidents_30d", 0),
+        },
+        "compliance_flags": {
+            "marpol_sulphur_ok": float(_pick(bdn, "sulphur_pct", default=0) or 0) <= 0.5,
+            "solas_flash_point_ok": float(
+                _pick(bdn, "flash_point_c", "flash_point", default=60) or 0
+            ) >= 60,
+            "mpa_licence_valid": bool(
+                _pick(bdn, "mpa_licence", "licence", default="")
+            ),
+            "quantity_within_tolerance": abs(discrepancy_pct) <= 0.5,
+            "ais_verified": bool(session.get("vessel_imo")),
+            "signatures_complete": bool(
+                _pick(bdn, "supp_signed", "supplier_signed", default=False)
+                and _pick(bdn, "officer_signed", default=False)
+            ),
+            "grade_matches_brf": not any(
+                anomaly.get("rule_id") == "A10" for anomaly in anomalies
+            ),
+        },
+        "executive_summary": narrative["executive_summary"],
+        "ai_narrative": narrative["ai_narrative"],
+        "recommended_actions": narrative["recommended_actions"],
+        "evidence_items": evidence_items,
+        "lop_draft": "",
+        "sign_off_status": _sign_off_status(risk_package),
+        "_usage": narrative.get("_usage", {}),
+    }
+
     delivered_quantity = float(session.get("mfm_qty_mt") or session.get("bdn_qty_mt") or 0)
     carbon = calculate_carbon_exposure(delivered_quantity, session.get("fuel_grade"))
 
@@ -243,36 +446,6 @@ def generate_evidence_report(session_id: str) -> dict:
         "supplementary_intelligence": True,
     }
 
-    if not report.get("report_id"):
-        report["report_id"] = f"RPT-{session_id}-{now}"
-    if not report.get("generated_at"):
-        report["generated_at"] = datetime.now(timezone.utc).isoformat()
-    if not report.get("session_id"):
-        report["session_id"] = session_id
-    if not report.get("sign_off_status"):
-        recommended = str(
-            report.get("risk_assessment", {}).get("recommended_verdict")
-            or risk_package.get("recommended_verdict")
-            or ""
-        ).upper()
-        risk_category = str(
-            report.get("risk_assessment", {}).get("risk_category")
-            or risk_package.get("risk_category")
-            or ""
-        ).upper()
-        if "REFUSE" in recommended or risk_category in {"CRITICAL", "HIGH"}:
-            report["sign_off_status"] = "REFUSE_TO_SIGN"
-        elif "LOP" in recommended:
-            report["sign_off_status"] = "SIGN_WITH_LOP"
-        elif "NOTE" in recommended or risk_category == "MEDIUM":
-            report["sign_off_status"] = "SIGN_WITH_NOTES"
-        else:
-            report["sign_off_status"] = "SIGN"
-
-    if report["session_id"] != session_id:
-        raise ValueError(
-            f"Report session_id mismatch: got {report['session_id']}, expected {session_id}"
-        )
     return report
 
 

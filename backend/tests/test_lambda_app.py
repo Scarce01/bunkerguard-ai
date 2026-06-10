@@ -25,6 +25,8 @@ def test_health() -> None:
             "LLM_PROVIDER": "bedrock",
             "AWS_REGION": "us-west-2",
             "BEDROCK_MODEL_ID": "us.anthropic.claude-sonnet-4-6",
+            "AI_GATEWAY_API_KEY": "configured",
+            "VERCEL_AI_GATEWAY_MODEL": "anthropic/claude-sonnet-4.6",
             "OPENROUTER_API_KEY": "configured",
             "ACTIVE_PROVIDER": "openrouter",
         },
@@ -34,6 +36,7 @@ def test_health() -> None:
     body = json.loads(response["body"])
     assert body["ok"] is True
     assert body["bedrock_configured"] is True
+    assert body["vercel_ai_gateway_configured"] is True
     assert body["openrouter_configured"] is True
     assert body["active_provider"] == "openrouter"
     assert body["bedrock_model"] == "us.anthropic.claude-sonnet-4-6"
