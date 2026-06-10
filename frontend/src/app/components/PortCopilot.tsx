@@ -3,6 +3,7 @@ import { useParams } from 'react-router';
 import { Bot, Send, Sparkles, X, Command } from 'lucide-react';
 import { useCopilotContext } from '../../lib/useCopilotContext';
 import { useCopilotSessions } from '../../lib/useCopilotSessions';
+import { useFocusedSessionContext } from '../../lib/useFocusedSessionContext';
 import { apiUrl } from '../../lib/api';
 
 const RAIL_WIDTH_PX = 380;
@@ -27,7 +28,14 @@ const SUGGESTIONS = [
   'Draft the LOP.',
 ];
 
-const SYSTEM_PROMPT = `You are BunkerGuard Copilot, an assistant for a Chief Engineer monitoring marine bunkering operations in Singapore. The user is at the dashboard looking at live sessions, suppliers, and anomalies. Be terse, concrete, and back every claim with the specific session_id, supplier name, rule code, or risk number from the CONTEXT block below. If the user asks something not covered by the context, say so plainly. Never invent vessel names, numbers, or verdicts. Format multi-line answers with short markdown bullets.`;
+const SYSTEM_PROMPT = `You are BunkerGuard Copilot, an assistant for a Chief Engineer monitoring marine bunkering operations in Singapore. The user is at the dashboard looking at live sessions, suppliers, and anomalies. Be terse, concrete, and back every claim with the specific session_id, supplier name, rule code, or risk number from the CONTEXT block below. If the user asks something not covered by the context, say so plainly. Never invent vessel names, numbers, or verdicts. Format multi-line answers with short markdown bullets.
+
+FOCUS RULES — apply when an "ACTIVE SESSION" block is present in CONTEXT:
+1. Treat the ACTIVE SESSION as the default investigation target.
+2. Answer every interpretive question ("why is the score this high", "do I sign this", "what next") about that session immediately, drawing from its risk breakdown, triggered anomalies, supplier signals, and evidence signals.
+3. Do NOT ask the user to specify a session. The focus is already chosen.
+4. Switch targets ONLY if the user explicitly names a different session_id.
+5. When citing facts, prefix with the active session_id so the source is unambiguous.`;
 
 interface PortCopilotProps {
   /** Force the copilot into tool-mode for this session, regardless of route.
@@ -208,6 +216,7 @@ export function PortCopilot({ sessionId: sessionIdProp }: PortCopilotProps = {})
   const [error, setError] = useState<string | null>(null);
   const { text: contextText, loading: ctxLoading } = useCopilotContext();
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Focused-session block is fetched below once `sessionId` is resolved.
 
   // Tool-mode resolution priority:
   //   1. user override via the picker chip (manualSessionId)
@@ -222,6 +231,7 @@ export function PortCopilot({ sessionId: sessionIdProp }: PortCopilotProps = {})
     manualSessionId ?? sessionIdProp ?? params.sessionId ?? pickerSessions[0]?.session_id;
   const toolMode = Boolean(sessionId);
   const focusedSession = pickerSessions.find((s) => s.session_id === sessionId);
+  const { text: focusText, loading: focusLoading } = useFocusedSessionContext(sessionId);
 
   // Rail vs overlay — wide viewports push content left; small viewports overlay
   // so the dashboard isn't crushed.
@@ -304,7 +314,14 @@ export function PortCopilot({ sessionId: sessionIdProp }: PortCopilotProps = {})
         }]);
       } else {
         // Fallback: multi-session text-context chat (the original path).
-        const sys = `${SYSTEM_PROMPT}\n\n## CONTEXT — live Supabase snapshot\n${contextText}`;
+        // When a session is focused, prepend it so the model never has to ask
+        // which session the question is about.
+        const focusBlock = focusText ? `${focusText}\n\n` : '';
+        const sys =
+          `${SYSTEM_PROMPT}\n\n` +
+          `## CONTEXT — live Supabase snapshot\n` +
+          `${focusBlock}` +
+          `${contextText}`;
         const res = await fetch(apiUrl('/api/copilot'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -383,6 +400,9 @@ export function PortCopilot({ sessionId: sessionIdProp }: PortCopilotProps = {})
           <div style={{ fontSize: 9, color: '#7FA5D3', letterSpacing: 0.6 }}>
             {providerLabel ?? 'Provider: Anthropic / AWS Bedrock (swappable)'}
             {ctxLoading ? ' · loading context…' : ` · ${contextText.length} chars context`}
+            {sessionId && (focusLoading
+              ? ' · loading focus…'
+              : focusText ? ` · focus ${sessionId}` : '')}
           </div>
         </div>
         <kbd
