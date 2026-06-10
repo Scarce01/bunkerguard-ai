@@ -34,7 +34,7 @@ def test_health() -> None:
     assert body["ok"] is True
     assert body["bedrock_configured"] is True
     assert body["openrouter_configured"] is True
-    assert body["active_provider"] == "bedrock"
+    assert body["active_provider"] == "bedrock_with_openrouter_fallback"
     assert body["bedrock_model"] == "us.anthropic.claude-sonnet-4-6"
 
 

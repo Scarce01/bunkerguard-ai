@@ -267,12 +267,10 @@ def call_text(
             )
         except Exception as exc:
             log.warning(
-                "bedrock_unavailable_falling_back",
-                extra={
-                    "model": model_id,
-                    "fallback_provider": "openrouter",
-                    "error_type": type(exc).__name__,
-                },
+                "bedrock_unavailable_falling_back model=%s error=%s: %s",
+                model_id,
+                type(exc).__name__,
+                exc,
             )
             return _call_openrouter(
                 system_prompt,
