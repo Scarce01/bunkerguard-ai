@@ -1,13 +1,7 @@
-"""LLM layer — Stage 4 (Copilot), Stage 5 (Evidence report), Stage 6 (Reputation).
+"""LLM services with lazy exports for optional dashboard dependencies."""
 
-Wraps the Anthropic SDK so the rest of the pipeline can stay deterministic
-Python. All LLM calls go through ``llm.claude_client.call_claude`` (one-shot
-JSON) or ``call_claude_with_tools`` (interactive officer copilot).
-"""
-
-from .chat_store import Chat, ChatMessage, CompositeChatStore, InMemoryChatStore
-from .copilot_tools import TOOL_SPECS, CopilotTools
-from .stage4_copilot import run_stage4, run_stage4_agent, run_stage4_chat_turn
+from importlib import import_module
+from typing import Any
 
 __all__ = [
     "Chat",
@@ -20,3 +14,25 @@ __all__ = [
     "run_stage4_agent",
     "run_stage4_chat_turn",
 ]
+
+_EXPORTS = {
+    "Chat": ("chat_store", "Chat"),
+    "ChatMessage": ("chat_store", "ChatMessage"),
+    "CompositeChatStore": ("chat_store", "CompositeChatStore"),
+    "InMemoryChatStore": ("chat_store", "InMemoryChatStore"),
+    "CopilotTools": ("copilot_tools", "CopilotTools"),
+    "TOOL_SPECS": ("copilot_tools", "TOOL_SPECS"),
+    "run_stage4": ("stage4_copilot", "run_stage4"),
+    "run_stage4_agent": ("stage4_copilot", "run_stage4_agent"),
+    "run_stage4_chat_turn": ("stage4_copilot", "run_stage4_chat_turn"),
+}
+
+
+def __getattr__(name: str) -> Any:
+    try:
+        module_name, attribute = _EXPORTS[name]
+    except KeyError as exc:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from exc
+    value = getattr(import_module(f".{module_name}", __name__), attribute)
+    globals()[name] = value
+    return value
