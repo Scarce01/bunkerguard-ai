@@ -291,11 +291,14 @@ export function PortCopilot({ sessionId: sessionIdProp }: PortCopilotProps = {})
     setBusy(true);
 
     try {
-      const productionApiConfigured = Boolean(
-        (import.meta.env.VITE_API_BASE_URL ?? '').trim(),
-      );
-      if (toolMode && sessionId && !productionApiConfigured) {
+      if (toolMode && sessionId) {
         // Tool-mode: backend runs Claude with the 8-tool surface.
+        // Works in BOTH dev and prod — apiUrl() prepends
+        // VITE_API_BASE_URL when set (Vercel → AWS API Gateway), or
+        // returns the relative path so Vite middleware handles it
+        // locally. Previously this branch was gated behind
+        // !productionApiConfigured, which meant the deployed FE never
+        // even tried tool-mode and the operator never saw plots.
         const history = messages.flatMap((m) => {
           const turns: any[] = [{ role: m.role, content: { text: m.content } }];
           for (const tc of m.toolCalls ?? []) {
@@ -303,7 +306,7 @@ export function PortCopilot({ sessionId: sessionIdProp }: PortCopilotProps = {})
           }
           return turns;
         });
-        const res = await fetch('/api/copilot-chat', {
+        const res = await fetch(apiUrl('/api/copilot-chat'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ session_id: sessionId, question: text, history }),
@@ -769,7 +772,7 @@ function ToolArtifact({
     );
   }
   const assetSrc = r.asset_relpath
-    ? `/api/copilot-asset/${r.asset_relpath}`
+    ? apiUrl(`/api/copilot-asset/${r.asset_relpath}`)
     : null;
 
   if (call.name === 'show_chart' && assetSrc) {
