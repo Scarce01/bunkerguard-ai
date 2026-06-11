@@ -25,7 +25,15 @@ export function useCopilotSessions(limit = 12) {
       .limit(limit)
       .then(({ data }) => {
         if (cancelled) return;
-        setRows((data ?? []) as CopilotSession[]);
+        const all = (data ?? []) as CopilotSession[];
+        // SES-2026-016 is the only session with the full data fan-out
+        // (MFM stream, supplier history, anomalies, risk components). Pin
+        // it to the top so the bar defaults to it and the first demo
+        // question lands on a session where every tool returns rich data.
+        const PINNED = 'SES-2026-016';
+        const pinned = all.find((s) => s.session_id === PINNED);
+        const rest = all.filter((s) => s.session_id !== PINNED);
+        setRows(pinned ? [pinned, ...rest] : all);
         setLoading(false);
       });
     return () => { cancelled = true; };

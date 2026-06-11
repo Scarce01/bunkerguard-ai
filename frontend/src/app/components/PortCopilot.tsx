@@ -1,10 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router';
-import { Bot, Send, Sparkles, X, Command } from 'lucide-react';
+import { useParams, useNavigate } from 'react-router';
+import { Bot, Send, X, Command, Gavel, LineChart, AlertTriangle, FileText, ArrowUpRight, PenLine } from 'lucide-react';
 import { useCopilotContext } from '../../lib/useCopilotContext';
 import { useCopilotSessions } from '../../lib/useCopilotSessions';
-import { useFocusedSessionContext } from '../../lib/useFocusedSessionContext';
-import { apiUrl } from '../../lib/api';
 
 const RAIL_WIDTH_PX = 380;
 const OVERLAY_BREAKPOINT_PX = 1100;
@@ -21,190 +19,25 @@ interface ChatMsg {
   toolCalls?: ToolCall[];
 }
 
-const SUGGESTIONS = [
-  'Do I sign this BDN?',
-  'Plot the cumulative flow.',
-  'Why is the score this high?',
-  'Draft the LOP.',
+// Tool-diverse welcome prompts. Icons differentiate the tool family;
+// colour is unified to the brand cyan so the rail reads as one strip.
+const CHIP_TONE = '#2EA8FF';
+const SUGGESTIONS: { text: string; icon: any }[] = [
+  { text: 'Do I sign this BDN?',          icon: Gavel },          // get_verdict_brief
+  { text: 'Plot the cumulative flow.',    icon: LineChart },      // show_chart mfm_flow
+  { text: 'Why is the score this high?',  icon: AlertTriangle },  // show_anomaly
+  { text: 'Build the evidence PDF.',      icon: FileText },       // generate_evidence_pdf
+  { text: 'Open the Live Session tab.',   icon: ArrowUpRight },   // open_tab
+  { text: 'Draft the LOP.',               icon: PenLine },        // draft_lop
 ];
 
-const SYSTEM_PROMPT = `You are BunkerGuard Copilot, an assistant for a Chief Engineer monitoring marine bunkering operations in Singapore. The user is at the dashboard looking at live sessions, suppliers, and anomalies. Be terse, concrete, and back every claim with the specific session_id, supplier name, rule code, or risk number from the CONTEXT block below. If the user asks something not covered by the context, say so plainly. Never invent vessel names, numbers, or verdicts. Format multi-line answers with short markdown bullets.
-
-FOCUS RULES — apply when an "ACTIVE SESSION" block is present in CONTEXT:
-1. Treat the ACTIVE SESSION as the default investigation target.
-2. Answer every interpretive question ("why is the score this high", "do I sign this", "what next") about that session immediately, drawing from its risk breakdown, triggered anomalies, supplier signals, and evidence signals.
-3. Do NOT ask the user to specify a session. The focus is already chosen.
-4. Switch targets ONLY if the user explicitly names a different session_id.
-5. When citing facts, prefix with the active session_id so the source is unambiguous.`;
+const SYSTEM_PROMPT = `You are BunkerGuard Copilot, an assistant for a Chief Engineer monitoring marine bunkering operations in Singapore. The user is at the dashboard looking at live sessions, suppliers, and anomalies. Be terse, concrete, and back every claim with the specific session_id, supplier name, rule code, or risk number from the CONTEXT block below. If the user asks something not covered by the context, say so plainly. Never invent vessel names, numbers, or verdicts. Format multi-line answers with short markdown bullets.`;
 
 interface PortCopilotProps {
   /** Force the copilot into tool-mode for this session, regardless of route.
    *  Mounted pages that already have a focused session (Dashboard's top-risk
    *  card, EvidenceCenter, etc.) should pass it here. */
   sessionId?: string;
-}
-
-function CopilotLauncher({ onOpen }: { onOpen: () => void }) {
-  return (
-    <button
-      className="bunkerguard-copilot-trigger"
-      onClick={onOpen}
-      aria-label="Open BunkerGuard Copilot"
-      style={{
-        position: 'fixed', bottom: 22, right: 22, zIndex: 60,
-        width: 92, height: 92,
-        padding: 0,
-        borderRadius: '50%',
-        background: 'transparent',
-        border: 0,
-        cursor: 'pointer',
-        display: 'grid',
-        placeItems: 'center',
-      }}
-      title="BunkerGuard Copilot — Cmd/Ctrl + K"
-    >
-      <style>{`
-        @keyframes copilotOrbitClockwise {
-          to { transform: rotate(360deg); }
-        }
-        @keyframes copilotOrbitCounterClockwise {
-          to { transform: rotate(-360deg); }
-        }
-        @keyframes copilotOrbBreathe {
-          0%, 100% {
-            opacity: 0.82;
-            transform: scale(0.96);
-            box-shadow:
-              0 0 10px rgba(74, 200, 255, 0.24),
-              0 0 24px rgba(74, 200, 255, 0.08);
-          }
-          50% {
-            opacity: 1;
-            transform: scale(1);
-            box-shadow:
-              0 0 14px rgba(74, 200, 255, 0.34),
-              0 0 30px rgba(74, 200, 255, 0.12);
-          }
-        }
-        .bunkerguard-copilot-trigger:focus-visible .copilot-core {
-          outline: 2px solid rgba(74, 200, 255, 0.72);
-          outline-offset: 4px;
-        }
-        .bunkerguard-copilot-trigger:hover .copilot-core {
-          border-color: rgba(74, 200, 255, 0.34);
-          background: linear-gradient(145deg, rgba(18, 43, 65, 0.92), rgba(7, 20, 34, 0.96));
-          box-shadow:
-            inset 0 1px 0 rgba(255, 255, 255, 0.08),
-            0 10px 32px rgba(0, 0, 0, 0.38),
-            0 0 24px rgba(74, 200, 255, 0.10);
-        }
-        @media (prefers-reduced-motion: reduce) {
-          .copilot-orbit,
-          .copilot-orb {
-            animation: none !important;
-          }
-        }
-      `}</style>
-
-      <svg
-        className="copilot-orbit"
-        aria-hidden="true"
-        viewBox="0 0 92 92"
-        style={{
-          position: 'absolute',
-          inset: 0,
-          width: 92,
-          height: 92,
-          animation: 'copilotOrbitClockwise 28s linear infinite',
-          transformOrigin: '50% 50%',
-          pointerEvents: 'none',
-        }}
-      >
-        <circle
-          cx="46"
-          cy="46"
-          r="42"
-          fill="none"
-          stroke="rgba(74, 200, 255, 0.18)"
-          strokeWidth="1"
-          strokeDasharray="6 10"
-          strokeLinecap="round"
-        />
-      </svg>
-
-      <svg
-        className="copilot-orbit"
-        aria-hidden="true"
-        viewBox="0 0 92 92"
-        style={{
-          position: 'absolute',
-          inset: 0,
-          width: 92,
-          height: 92,
-          animation: 'copilotOrbitCounterClockwise 36s linear infinite',
-          transformOrigin: '50% 50%',
-          pointerEvents: 'none',
-        }}
-      >
-        <circle
-          cx="46"
-          cy="46"
-          r="37"
-          fill="none"
-          stroke="rgba(74, 200, 255, 0.08)"
-          strokeWidth="1"
-          strokeDasharray="3 18"
-          strokeLinecap="round"
-        />
-      </svg>
-
-      <span
-        className="copilot-core"
-        style={{
-          width: 76,
-          height: 76,
-          borderRadius: '50%',
-          background: 'linear-gradient(145deg, rgba(15, 36, 56, 0.90), rgba(6, 18, 31, 0.96))',
-          border: '1px solid rgba(74, 200, 255, 0.22)',
-          boxShadow: `
-            inset 0 1px 0 rgba(255, 255, 255, 0.07),
-            inset 0 -10px 24px rgba(0, 0, 0, 0.20),
-            0 10px 30px rgba(0, 0, 0, 0.34),
-            0 0 20px rgba(74, 200, 255, 0.07)
-          `,
-          backdropFilter: 'blur(18px) saturate(135%)',
-          WebkitBackdropFilter: 'blur(18px) saturate(135%)',
-          display: 'grid',
-          placeItems: 'center',
-          transition: 'background 220ms ease, border-color 220ms ease, box-shadow 220ms ease',
-        }}
-      >
-        <span
-          className="copilot-orb"
-          style={{
-            width: 38,
-            height: 38,
-            borderRadius: '50%',
-            background: `
-              radial-gradient(circle at 38% 32%,
-                rgba(220, 248, 255, 0.96) 0%,
-                rgba(100, 211, 255, 0.72) 18%,
-                rgba(45, 150, 205, 0.34) 48%,
-                rgba(10, 42, 66, 0.18) 72%,
-                rgba(5, 20, 34, 0) 100%)
-            `,
-            border: '1px solid rgba(135, 225, 255, 0.16)',
-            display: 'grid',
-            placeItems: 'center',
-            color: '#BCEEFF',
-            animation: 'copilotOrbBreathe 4.8s ease-in-out infinite',
-          }}
-        >
-          <Bot size={17} strokeWidth={1.6} />
-        </span>
-      </span>
-    </button>
-  );
 }
 
 export function PortCopilot({ sessionId: sessionIdProp }: PortCopilotProps = {}) {
@@ -216,7 +49,6 @@ export function PortCopilot({ sessionId: sessionIdProp }: PortCopilotProps = {})
   const [error, setError] = useState<string | null>(null);
   const { text: contextText, loading: ctxLoading } = useCopilotContext();
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Focused-session block is fetched below once `sessionId` is resolved.
 
   // Tool-mode focus resolution. The mental model:
   //   * When the user is on a session detail page or a page that explicitly
@@ -225,6 +57,7 @@ export function PortCopilot({ sessionId: sessionIdProp }: PortCopilotProps = {})
   //   * Off-session pages fall back to (a) the user's last manual pick, or
   //     (b) the top-risk session so the bar is always tool-mode.
   const params = useParams<{ sessionId?: string }>();
+  const navigate = useNavigate();
   const { sessions: pickerSessions } = useCopilotSessions(12);
   const [manualSessionId, setManualSessionId] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -232,7 +65,6 @@ export function PortCopilot({ sessionId: sessionIdProp }: PortCopilotProps = {})
   const sessionId = routeOrProp ?? manualSessionId ?? pickerSessions[0]?.session_id;
   const toolMode = Boolean(sessionId);
   const focusedSession = pickerSessions.find((s) => s.session_id === sessionId);
-  const { text: focusText, loading: focusLoading } = useFocusedSessionContext(sessionId);
 
   // Whenever the route/prop binds a new session, clear any stale manual pick
   // AND reset the chat — a new focus means a new conversation.
@@ -295,10 +127,7 @@ export function PortCopilot({ sessionId: sessionIdProp }: PortCopilotProps = {})
     setBusy(true);
 
     try {
-      const productionApiConfigured = Boolean(
-        (import.meta.env.VITE_API_BASE_URL ?? '').trim(),
-      );
-      if (toolMode && sessionId && !productionApiConfigured) {
+      if (toolMode && sessionId) {
         // Tool-mode: backend runs Claude with the 8-tool surface.
         const history = messages.flatMap((m) => {
           const turns: any[] = [{ role: m.role, content: { text: m.content } }];
@@ -322,17 +151,18 @@ export function PortCopilot({ sessionId: sessionIdProp }: PortCopilotProps = {})
           content: data.answer || '(empty)',
           toolCalls: data.tool_calls ?? [],
         }]);
+        // open_tab side effect — the tool returned a React route, and the
+        // officer just said "open / show me on dashboard". Honour it by
+        // navigating now. We keep the chat bubble + caption so the user
+        // also sees a visual record of what just happened.
+        const navHit = (data.tool_calls ?? []).find((tc: any) =>
+          tc?.name === 'open_tab' && tc?.result?.route && !tc?.result?.error,
+        );
+        if (navHit) navigate(navHit.result.route as string);
       } else {
         // Fallback: multi-session text-context chat (the original path).
-        // When a session is focused, prepend it so the model never has to ask
-        // which session the question is about.
-        const focusBlock = focusText ? `${focusText}\n\n` : '';
-        const sys =
-          `${SYSTEM_PROMPT}\n\n` +
-          `## CONTEXT — live Supabase snapshot\n` +
-          `${focusBlock}` +
-          `${contextText}`;
-        const res = await fetch(apiUrl('/api/copilot'), {
+        const sys = `${SYSTEM_PROMPT}\n\n## CONTEXT — live Supabase snapshot\n${contextText}`;
+        const res = await fetch('/api/copilot', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ system: sys, messages: next, maxTokens: 700 }),
@@ -357,7 +187,37 @@ export function PortCopilot({ sessionId: sessionIdProp }: PortCopilotProps = {})
   }
 
   if (!open) {
-    return <CopilotLauncher onOpen={() => setOpen(true)} />;
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        style={{
+          position: 'fixed', bottom: 22, right: 22, zIndex: 60,
+          padding: '10px 14px',
+          borderRadius: 28,
+          background: 'linear-gradient(135deg, rgba(46,168,255,0.95), rgba(111,91,255,0.95))',
+          border: '1px solid rgba(255,255,255,0.18)',
+          boxShadow: '0 6px 24px rgba(46,168,255,0.45)',
+          color: '#fff',
+          cursor: 'pointer',
+          display: 'flex', alignItems: 'center', gap: 8,
+          fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
+          backdropFilter: 'blur(10px)',
+        }}
+        title="BunkerGuard Copilot — Cmd/Ctrl + K"
+      >
+        <Bot size={18} />
+        <span>Copilot</span>
+        <kbd style={{
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: 9.5, fontWeight: 700,
+          padding: '1px 5px',
+          background: 'rgba(255,255,255,0.18)',
+          border: '1px solid rgba(255,255,255,0.25)',
+          borderRadius: 3,
+          color: '#fff',
+        }}>⌘K</kbd>
+      </button>
+    );
   }
 
   const railStyle: React.CSSProperties = isWide
@@ -410,9 +270,6 @@ export function PortCopilot({ sessionId: sessionIdProp }: PortCopilotProps = {})
           <div style={{ fontSize: 9, color: '#7FA5D3', letterSpacing: 0.6 }}>
             {providerLabel ?? 'Provider: Anthropic / AWS Bedrock (swappable)'}
             {ctxLoading ? ' · loading context…' : ` · ${contextText.length} chars context`}
-            {sessionId && (focusLoading
-              ? ' · loading focus…'
-              : focusText ? ` · focus ${sessionId}` : '')}
           </div>
         </div>
         <kbd
@@ -524,24 +381,29 @@ export function PortCopilot({ sessionId: sessionIdProp }: PortCopilotProps = {})
               I'm watching the live <strong style={{ color: '#E5F2FF' }}>sessions</strong>, <strong style={{ color: '#E5F2FF' }}>anomalies</strong>, and <strong style={{ color: '#E5F2FF' }}>suppliers</strong> tables in Supabase. Ask me anything about the current port state, or try one of these:
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
-              {SUGGESTIONS.map((s) => (
-                <button key={s}
-                  onClick={() => send(s)}
+              {SUGGESTIONS.map((s) => {
+                const Icon = s.icon;
+                return (
+                <button key={s.text}
+                  onClick={() => send(s.text)}
                   style={{
                     textAlign: 'left',
                     padding: '8px 10px',
                     fontSize: 11, fontWeight: 500,
-                    background: 'rgba(46,168,255,0.10)',
-                    border: '1px solid rgba(46,168,255,0.28)',
+                    background: `${CHIP_TONE}14`,
+                    border: `1px solid ${CHIP_TONE}55`,
+                    borderLeft: `3px solid ${CHIP_TONE}`,
                     color: '#E5F2FF',
                     borderRadius: 6,
                     cursor: 'pointer',
-                    display: 'flex', alignItems: 'center', gap: 6,
+                    display: 'flex', alignItems: 'center', gap: 8,
                   }}>
-                  <Sparkles size={11} style={{ color: '#2EA8FF' }} />
-                  {s}
+                  <Icon size={12} style={{ color: CHIP_TONE, flexShrink: 0 }} />
+                  {s.text}
                 </button>
-              ))}
+                );
+              })}
+              {/* close map */}
             </div>
           </>
         )}
@@ -599,6 +461,46 @@ export function PortCopilot({ sessionId: sessionIdProp }: PortCopilotProps = {})
             {error}
           </div>
         )}
+      </div>
+
+      {/* Persistent suggestion rail — chips stay visible across the whole
+          conversation so the officer can re-fire any tool with one tap.
+          Horizontal scroll keeps them in a single row above the input. */}
+      <div style={{
+        padding: '8px 10px',
+        borderTop: '1px solid rgba(46,168,255,0.12)',
+        display: 'flex', gap: 6, overflowX: 'auto',
+        scrollbarWidth: 'none',
+      }}>
+        {SUGGESTIONS.map((s) => {
+          const Icon = s.icon;
+          return (
+            <button key={s.text}
+              onClick={() => send(s.text)}
+              title={s.text}
+              disabled={busy}
+              style={{
+                flexShrink: 0,
+                padding: '5px 9px',
+                fontSize: 10.5, fontWeight: 600,
+                background: `${CHIP_TONE}14`,
+                border: `1px solid ${CHIP_TONE}55`,
+                borderLeft: `3px solid ${CHIP_TONE}`,
+                color: '#E5F2FF',
+                borderRadius: 999,
+                cursor: busy ? 'not-allowed' : 'pointer',
+                opacity: busy ? 0.5 : 1,
+                display: 'inline-flex', alignItems: 'center', gap: 5,
+                whiteSpace: 'nowrap',
+                transition: 'background 0.15s ease',
+              }}
+              onMouseEnter={(e) => { if (!busy) e.currentTarget.style.background = `${CHIP_TONE}33`; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = `${CHIP_TONE}14`; }}>
+              <Icon size={11} style={{ color: CHIP_TONE, flexShrink: 0 }} />
+              {s.text}
+            </button>
+          );
+        })}
       </div>
 
       <form

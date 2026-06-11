@@ -150,7 +150,7 @@ function copilotChatProxy() {
               },
               encoding: 'utf-8',
               maxBuffer: 8 * 1024 * 1024,
-              timeout: 120_000,
+              timeout: 240_000,
               windowsHide: true,
             })
             res.setHeader('Content-Type', 'application/json')

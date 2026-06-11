@@ -45,16 +45,22 @@ if TYPE_CHECKING:
 log = logging.getLogger("bunkerguard.llm.copilot_tools")
 
 # ---------------------------------------------------------------- tab catalog
-# Stable IDs the dashboard reads from the tab-hint state file. Must match the
-# tabs declared in _other_stages/dashboard/app.py:180.
-TAB_IDS = {
-    "overview": "📊 Overview",
-    "mfm_stream": "📈 MFM Stream",
-    "anomalies": "🚨 Anomalies",
-    "evidence": "🗂️ Evidence",
-    "lop_brief": "📝 LOP & Brief",
-    "audit_chain": "🔐 Audit & Chain",
-    "recovery_fee": "💰 Recovery Fee",
+# Stable IDs the frontend listens on. Each maps to a real React route in
+# D:/next-bunker-fe/src/app/App.tsx — the Copilot side returns both the
+# tab_id and a `route`, and the frontend calls useNavigate(route) on receipt.
+# The third column is the human label shown in the chat caption.
+TAB_IDS: dict[str, dict[str, str]] = {
+    "overview":     {"route": "/",             "label": "Dashboard"},
+    "live":         {"route": "/live",         "label": "Live Session"},
+    "mfm_stream":   {"route": "/live",         "label": "Live Session · MFM"},
+    "sessions":     {"route": "/sessions",     "label": "Sessions"},
+    "anomalies":    {"route": "/anomalies",    "label": "Anomaly Monitor"},
+    "intelligence": {"route": "/intelligence", "label": "Intelligence"},
+    "suppliers":    {"route": "/suppliers",    "label": "Suppliers"},
+    "evidence":     {"route": "/evidence",     "label": "Evidence Center"},
+    "lop_brief":    {"route": "/reports",      "label": "Reports"},
+    "reports":      {"route": "/reports",      "label": "Reports"},
+    "audit_chain":  {"route": "/evidence",     "label": "Evidence Center"},
 }
 
 # Chart kinds the officer can ask for. Each maps to a renderer in outputs.charts.
@@ -311,23 +317,99 @@ class CopilotTools:
             except Exception as e:
                 log.warning("report_bundle failed, falling back: %s", e)
 
-        # Path B — Supabase-mode. Use the same service the dashboard's
-        # /api/evidence-report endpoint calls so the PDF is identical.
+        # Path B — Supabase-mode. Mirror frontend/scripts/evidence_report_runner.py
+        # so the PDF the Copilot emits is byte-identical to the dashboard's
+        # Generate Evidence Report flow (same hash header, same anchor tx).
         try:
             from llm.evidence_report_service import (
                 generate_evidence_report,
                 render_evidence_report_pdf,
+                store_evidence_report,
             )
         except ImportError as e:
             return {"error": f"evidence_report_service unavailable: {e}"}
         try:
+            import datetime as _dt
+            import hashlib as _hashlib
+            import json as _json
+
             report = generate_evidence_report(sid)
+            # Add the report_hash before rendering — the PDF footer reads it
+            # via report["report_hash"]. Without this the PDF prints "Hash …"
+            # blank, which is the visual drift the user noticed.
+            canonical = _json.dumps(report, sort_keys=True,
+                                    separators=(",", ":")).encode()
+            report["report_hash"] = "0x" + _hashlib.sha256(canonical).hexdigest()[:16]
+            hashed_at = _dt.datetime.now(_dt.timezone.utc).isoformat()
+            anchor_tx = "0x" + _hashlib.sha256(
+                (report["report_hash"] + hashed_at).encode()
+            ).hexdigest()[:40]
+
+            # Persist to Supabase so the report shows up on the Reports page
+            # alongside the dashboard-generated ones.
+            store_error = None
+            try:
+                store_evidence_report(
+                    report, report.get("report_id", sid), anchor_tx=anchor_tx)
+            except Exception as e:
+                store_error = f"{type(e).__name__}: {e}"
+                log.warning("evidence_store_failed: %s", store_error)
+
             pdf_path = render_evidence_report_pdf(report, out_dir=self.output_dir)
+
+            # Upload the PDF blob to Supabase Storage under the same bucket
+            # and path convention the frontend's saveReportPdf() uses, so the
+            # report appears on the Reports tab next to dashboard-generated
+            # ones. Path: `evidence-report/<id>.pdf` in bucket `app-reports`.
+            storage_path = None
+            storage_url = None
+            storage_error = None
+            try:
+                import os as _os
+                from supabase import create_client  # type: ignore
+                sb = create_client(_os.environ["SUPABASE_URL"],
+                                   _os.environ["SUPABASE_SERVICE_KEY"])
+                rid = report.get("report_id") or sid
+                stamp = hashed_at.replace(":", "").replace(".", "")[:15] + "Z"
+                slug = (rid or sid).lower().replace(" ", "-")
+                storage_path = f"evidence-report/evidence-report-{slug}-{stamp}.pdf"
+                with open(pdf_path, "rb") as f:
+                    pdf_bytes = f.read()
+                # Ensure the bucket exists. The frontend's saveReportPdf assumes
+                # it does; auto-create if not so the Copilot path works on a
+                # fresh project too.
+                try:
+                    sb.storage.create_bucket(
+                        "app-reports",
+                        options={"public": True,
+                                 "allowed_mime_types": ["application/pdf"]},
+                    )
+                except Exception:
+                    pass  # already exists is fine
+                sb.storage.from_("app-reports").upload(
+                    storage_path, pdf_bytes,
+                    file_options={"content-type": "application/pdf",
+                                  "upsert": "true",
+                                  "cache-control": "3600"},
+                )
+                storage_url = sb.storage.from_("app-reports").get_public_url(
+                    storage_path)
+            except Exception as e:
+                storage_error = f"{type(e).__name__}: {e}"
+                log.warning("storage_upload_failed: %s", storage_error)
+
             return {
                 "path": str(pdf_path),
                 "caption": f"Evidence report · {sid}",
                 "report_id": report.get("report_id"),
                 "sign_off_status": report.get("sign_off_status"),
+                "report_hash": report["report_hash"],
+                "anchor_tx": anchor_tx,
+                "hashed_at": hashed_at,
+                "store_error": store_error,
+                "storage_path": storage_path,
+                "storage_url": storage_url,
+                "storage_error": storage_error,
             }
         except Exception as e:
             log.exception("evidence_pdf_supabase_failed")
@@ -359,17 +441,25 @@ class CopilotTools:
     # ------------------------------------------------------------ Tier 3
 
     def open_tab(self, tab_id: str) -> dict:
-        """Hint the dashboard to focus a tab. Use only when officer asks."""
+        """Navigate the React app to the matching route. The frontend reads
+        the ``route`` field on this tool's result and calls useNavigate.
+        """
         if tab_id not in TAB_IDS:
             return {"error": f"unknown tab: {tab_id}",
                     "available": list(TAB_IDS)}
+        target = TAB_IDS[tab_id]
+        # Sticky hint for any UI that polls the file (Streamlit dashboard).
         hint_path = self.output_dir / "tab_hint.json"
         hint_path.write_text(
             json.dumps({"session_id": self.view.session_id,
-                        "tab_id": tab_id, "label": TAB_IDS[tab_id]}),
+                        "tab_id": tab_id, **target}),
             encoding="utf-8")
-        return {"tab_id": tab_id, "label": TAB_IDS[tab_id],
-                "hint_path": str(hint_path)}
+        return {
+            "tab_id": tab_id,
+            "route": target["route"],
+            "label": target["label"],
+            "hint_path": str(hint_path),
+        }
 
 
 # ---------------------------------------------------------------- helpers
@@ -496,7 +586,7 @@ TOOL_SPECS: list[dict] = [
     },
     {
         "name": "open_tab",
-        "description": "Focus a dashboard tab. Use ONLY when the officer explicitly asks to see something on the dashboard — never volunteer navigation.",
+        "description": "Navigate the dashboard to another page. Use ONLY when the officer explicitly asks to 'open / show me / switch to' a section — never volunteer navigation. tab_id values: overview (Dashboard), live (Live Session), mfm_stream (Live Session MFM view), sessions (Sessions list), anomalies (Anomaly Monitor), intelligence (multi-agent stream), suppliers (Supplier list), evidence (Evidence Center), reports (Generated reports), lop_brief (Reports), audit_chain (Evidence Center).",
         "input_schema": {
             "type": "object",
             "properties": {
