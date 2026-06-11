@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import {
   LayoutDashboard,
@@ -25,6 +26,10 @@ const navigationItems = [
 
 export function Sidebar() {
   const location = useLocation();
+  /* React-controlled image-load state — switches to the Shield
+   * fallback when the SVG/PNG asset fails to fetch, instead of
+   * mutating DOM (which races against HMR re-renders). */
+  const [logoFailed, setLogoFailed] = useState(false);
 
   /* match /intelligence even on sub-paths */
   function isActive(path: string) {
@@ -40,17 +45,34 @@ export function Sidebar() {
         borderRight: '1px solid rgba(255,255,255,0.09)',
       }}
     >
-      {/* Logo */}
+      {/* Logo — the custom BunkerGuard mark (stylised B + ship's bow).
+       *  Lives at public/bunkerguard-logo.png so Vite serves it at /.
+       *  Falls back to the lucide Shield icon when the file is missing
+       *  so the header never looks like an empty black tile during
+       *  brand-asset swaps. */}
       <div className="px-6 py-7" style={{ borderBottom: '1px solid rgba(255,255,255,0.09)' }}>
         <div className="flex items-center gap-2.5 mb-0.5">
           <div
-            className="w-7 h-7 rounded-lg flex items-center justify-center"
+            className="w-7 h-7 rounded-lg flex items-center justify-center overflow-hidden relative"
             style={{
-              background: 'rgba(46,168,255,0.12)',
+              background: '#000000',
               border: '1px solid rgba(46,168,255,0.25)',
             }}
           >
-            <Shield className="w-4 h-4" style={{ color: '#2EA8FF' }} />
+            {/* Render the brand mark OR the Shield fallback — never
+                both — based on React state. Avoids DOM mutation races
+                where HMR could leave `display:none` stuck on the img. */}
+            {logoFailed ? (
+              <Shield className="w-4 h-4" style={{ color: '#2EA8FF' }} />
+            ) : (
+              <img
+                src="/bunkerguard-logo.svg"
+                alt="BunkerGuard AI"
+                draggable={false}
+                style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+                onError={() => setLogoFailed(true)}
+              />
+            )}
           </div>
           <h1 className="text-base font-bold tracking-tight" style={{ color: '#EFF4F9' }}>
             BunkerGuard AI

@@ -1,0 +1,57 @@
+<!-- BunkerGuard AI brand mark — stylised B + ship's bow + wave.
+     Approximation of the AI-generated logo while the user's PNG is
+     unavailable. Pure-vector so it scales crisply at any sidebar tile
+     size. Swap the file in /public to replace with the real PNG. -->
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="BunkerGuard AI">
+  <!-- Pitch-black tile background -->
+  <rect width="64" height="64" rx="10" fill="#000000"/>
+
+  <!-- Stylised B in the shape of a shield. Two loops, evenodd
+       fill-rule cuts the interior counters so the ship below shows
+       through cleanly. -->
+  <path
+    fill="#FFFFFF"
+    fill-rule="evenodd"
+    d="
+      M 18 11
+      L 18 56
+      L 39 56
+      C 50 56 53 50 53 43
+      C 53 36 49 33 44 32
+      C 48 30 51 26 51 21
+      C 51 14 47 11 39 11
+      Z
+      M 25 17
+      L 38 17
+      C 42 17 44 19 44 22
+      C 44 25 42 28 38 28
+      L 25 28
+      Z
+      M 25 35
+      L 39 35
+      C 44 35 47 38 47 42
+      C 47 46 44 49 39 49
+      L 25 49
+      Z
+    "/>
+
+  <!-- Ship's bow + mast with a cross — sits centred inside the upper
+       counter of the B so the silhouette reads as both a letter and a
+       seafaring icon. -->
+  <g fill="#FFFFFF">
+    <!-- Bow hull -->
+    <path d="M 28 24 L 38 24 L 40 27 L 26 27 Z"/>
+    <!-- Mast -->
+    <rect x="32.4" y="14" width="1.2" height="10"/>
+    <!-- Cross-yard -->
+    <rect x="30" y="17" width="6" height="1"/>
+  </g>
+
+  <!-- Single wave underneath — sweep that closes the shield silhouette. -->
+  <path
+    d="M 14 60 Q 22 57 28 60 T 42 60 T 54 60"
+    fill="none"
+    stroke="#FFFFFF"
+    stroke-width="1.6"
+    stroke-linecap="round"/>
+</svg>
