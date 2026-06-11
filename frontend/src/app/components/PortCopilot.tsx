@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router';
 import { Bot, Send, X, Command, Gavel, LineChart, AlertTriangle, FileText, ArrowUpRight, PenLine } from 'lucide-react';
 import { useCopilotContext } from '../../lib/useCopilotContext';
 import { useCopilotSessions } from '../../lib/useCopilotSessions';
+import { apiUrl } from '../../lib/api';
 
 const RAIL_WIDTH_PX = 380;
 const OVERLAY_BREAKPOINT_PX = 1100;
@@ -127,7 +128,10 @@ export function PortCopilot({ sessionId: sessionIdProp }: PortCopilotProps = {})
     setBusy(true);
 
     try {
-      if (toolMode && sessionId) {
+      const productionApiConfigured = Boolean(
+        (import.meta.env.VITE_API_BASE_URL ?? '').trim(),
+      );
+      if (toolMode && sessionId && !productionApiConfigured) {
         // Tool-mode: backend runs Claude with the 8-tool surface.
         const history = messages.flatMap((m) => {
           const turns: any[] = [{ role: m.role, content: { text: m.content } }];
@@ -145,7 +149,7 @@ export function PortCopilot({ sessionId: sessionIdProp }: PortCopilotProps = {})
         if (!res.ok || data?.ok === false) {
           throw new Error(data?.error ?? `chat proxy ${res.status}`);
         }
-        setProviderLabel(`Anthropic · ${data?.usage?.model ?? 'tool-mode'}`);
+        setProviderLabel(`Local tool mode · ${data?.usage?.model ?? 'configured model'}`);
         setMessages([...next, {
           role: 'assistant',
           content: data.answer || '(empty)',
@@ -160,26 +164,39 @@ export function PortCopilot({ sessionId: sessionIdProp }: PortCopilotProps = {})
         );
         if (navHit) navigate(navHit.result.route as string);
       } else {
-        // Fallback: multi-session text-context chat (the original path).
-        const sys = `${SYSTEM_PROMPT}\n\n## CONTEXT — live Supabase snapshot\n${contextText}`;
-        const res = await fetch('/api/copilot', {
+        // Production uses the AWS Lambda/API Gateway provider chain.
+        const focusContext = sessionId
+          ? `\n\n## FOCUSED SESSION\nsession_id: ${sessionId}`
+          : '';
+        const sys = `${SYSTEM_PROMPT}${focusContext}\n\n## CONTEXT — live Supabase snapshot\n${contextText}`;
+        const res = await fetch(apiUrl('/api/copilot'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ system: sys, messages: next, maxTokens: 700 }),
         });
+        const contentType = res.headers.get('content-type') ?? '';
+        if (!contentType.includes('application/json')) {
+          throw new Error(`Copilot endpoint returned ${contentType || 'an invalid response'}`);
+        }
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
           throw new Error(body?.error ?? `proxy ${res.status}`);
         }
         const data = await res.json();
-        setProviderLabel(data?.provider ?? null);
+        const provider = data?.provider_used ?? data?.provider;
+        setProviderLabel(
+          provider
+            ? `${provider === 'bedrock' ? 'Bedrock' : provider} · ${data?.model ?? 'configured model'}`
+            : null,
+        );
         setMessages([...next, { role: 'assistant', content: data.text ?? '(empty)' }]);
       }
     } catch (e: any) {
-      setError(e?.message ?? String(e));
+      const reason = e?.message ?? String(e);
+      setError(reason);
       setMessages([...next, {
         role: 'assistant',
-        content: '⚠ Copilot proxy unavailable — set ANTHROPIC_API_KEY in your environment and restart Vite. Falling back to the live context snapshot only.',
+        content: `Copilot request failed: ${reason}. The live session context remains available.`,
       }]);
     } finally {
       setBusy(false);
