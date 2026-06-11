@@ -125,6 +125,12 @@ Resources:
           VERCEL_AI_GATEWAY_MODEL: !Ref VercelAiGatewayModel
           ACTIVE_PROVIDER: !Ref ActiveProvider
           CORS_ORIGIN: !Ref CorsOrigin
+          # Lambda's filesystem is read-only outside /tmp. Matplotlib
+          # tries to write its font cache to ~/.matplotlib on first
+          # import; redirect HOME + MPLCONFIGDIR so chart rendering
+          # under /api/copilot-chat doesn't crash with PermissionError.
+          HOME: /tmp
+          MPLCONFIGDIR: /tmp/matplotlib
 
   HttpApi:
     Type: AWS::ApiGatewayV2::Api
@@ -191,6 +197,34 @@ Resources:
     Properties:
       ApiId: !Ref HttpApi
       RouteKey: GET /api/ingestion/{document_id}
+      Target: !Sub integrations/${BackendIntegration}
+
+  CopilotChatRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /api/copilot-chat
+      Target: !Sub integrations/${BackendIntegration}
+
+  CopilotAssetRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /api/copilot-asset/{proxy+}
+      Target: !Sub integrations/${BackendIntegration}
+
+  AgentOutputRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /api/agent-output
+      Target: !Sub integrations/${BackendIntegration}
+
+  EnrichRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /api/enrich
       Target: !Sub integrations/${BackendIntegration}
 
   DefaultStage:

@@ -4,3 +4,11 @@ cryptography>=44,<46
 pydantic>=2.11,<3
 pypdf>=5.4,<7
 supabase>=2.15,<3
+# Chart + PDF + image generation used by /api/copilot-chat tools
+# (show_chart, get_evidence_report, generate_lop). Matches
+# requirements-outputs.txt so AWS produces identical artefacts.
+matplotlib>=3.7,<4
+pandas>=2.0,<3
+reportlab>=4.0,<5
+pillow>=10.0,<12
+qrcode[pil]>=7.4,<9

@@ -17,7 +17,7 @@ from llm.evidence_report_service import (
     store_evidence_report,
 )
 from ingestion.workflow import process_ingestion
-from storage import put_bytes, put_json
+from storage import put_bytes, put_json, get_bytes
 
 
 def _cors_headers() -> dict[str, str]:
@@ -103,6 +103,221 @@ def _copilot(payload: dict[str, Any]) -> dict[str, Any]:
         "modelId": result["model_id"],
         "usage": result["_usage"],
     }
+
+
+def _copilot_chat(payload: dict[str, Any]) -> dict[str, Any]:
+    """Tool-using copilot — Lambda twin of `/api/copilot-chat` in dev.
+
+    Parity goals with `scripts/copilot_chat_runner.py`:
+      * Loads chat history from Supabase via `llm.chat_store`.
+      * Runs `llm.stage4_copilot.run_stage4_chat_turn_supabase` which
+        executes Claude with the 8-tool surface (show_chart, get_verdict_brief,
+        get_lop_draft, …).
+      * Uploads any chart PNG / PDF the tools wrote to disk to the
+        EvidenceBucket so `/api/copilot-asset/<key>` can stream them
+        back. Lambda has no persistent filesystem — local paths only
+        survive within one invocation.
+    """
+    import tempfile
+    from pathlib import Path
+
+    from llm.chat_store import get_or_create_chat
+    from llm.stage4_copilot import run_stage4_chat_turn_supabase
+
+    session_id = str(payload.get("session_id") or "").strip()
+    question = str(payload.get("question") or "").strip()
+    if not session_id:
+        raise ValueError("session_id is required")
+    if not question:
+        raise ValueError("question is required")
+
+    chat_id = payload.get("chat_id") or None
+    chat = get_or_create_chat(session_id=session_id, chat_id=chat_id)
+
+    # Force Copilot tools to write artefacts to a fresh /tmp dir we
+    # control, then sweep them into S3 below.
+    with tempfile.TemporaryDirectory(prefix="copilot-") as tmp:
+        out_root = Path(tmp)
+        # llm.copilot_tools picks up CWD-relative `output/<session>/...`
+        # by default. Pin CWD to the tmp dir so every chart lands there.
+        prev_cwd = os.getcwd()
+        os.chdir(out_root)
+        try:
+            result = run_stage4_chat_turn_supabase(chat, question, session_id)
+        finally:
+            os.chdir(prev_cwd)
+
+        tool_calls: list[dict[str, Any]] = []
+        for tc in result.get("tool_calls") or []:
+            res = dict(tc.get("result") or {})
+            local_path = res.get("path") or res.get("pdf_path")
+            if local_path:
+                p = Path(local_path)
+                if not p.is_absolute():
+                    p = (out_root / p).resolve()
+                if p.exists() and p.is_file():
+                    suffix = p.suffix.lower()
+                    content_type = (
+                        "image/png" if suffix == ".png"
+                        else "image/jpeg" if suffix in (".jpg", ".jpeg")
+                        else "image/svg+xml" if suffix == ".svg"
+                        else "application/pdf" if suffix == ".pdf"
+                        else "text/markdown; charset=utf-8" if suffix == ".md"
+                        else "application/octet-stream"
+                    )
+                    body = p.read_bytes()
+                    s3_key = put_bytes(
+                        "copilot-assets",
+                        session_id,
+                        p.name,
+                        body,
+                        content_type,
+                    )
+                    # FE fetches /api/copilot-asset/<asset_relpath>.
+                    # Using the S3 key directly keeps the contract
+                    # unchanged — the GET handler reads from S3.
+                    res["asset_relpath"] = s3_key
+                else:
+                    res["asset_relpath"] = None
+            tool_calls.append({
+                "name": tc.get("name"),
+                "args": tc.get("args") or {},
+                "result": res,
+            })
+
+    return {
+        "ok": True,
+        "answer": result.get("answer") or result.get("error") or "",
+        "tool_calls": tool_calls,
+        "usage": result.get("_usage") or {},
+        "chat_id": chat.chat_id,
+        "chat_messages": [
+            {"role": m.role, "content": m.content, "turn_index": m.turn_index}
+            for m in chat.messages
+        ],
+    }
+
+
+def _copilot_asset(path_suffix: str) -> dict[str, Any]:
+    """Stream a previously-uploaded copilot asset from S3.
+
+    The FE's <img src="/api/copilot-asset/<key>"> uses `asset_relpath`
+    from a tool call — which `_copilot_chat` populated with the S3 key
+    of the upload. We fetch it and return base64-encoded so API
+    Gateway can serialise the binary body.
+    """
+    key = path_suffix.lstrip("/")
+    if not key:
+        return _response(400, {"ok": False, "error": "asset key required"})
+    try:
+        body = get_bytes(key)
+    except Exception as exc:
+        return _response(404, {"ok": False, "error": f"asset not found: {exc}"})
+    suffix = key.rsplit(".", 1)[-1].lower() if "." in key else ""
+    content_type = (
+        "image/png" if suffix == "png"
+        else "image/jpeg" if suffix in ("jpg", "jpeg")
+        else "image/svg+xml" if suffix == "svg"
+        else "application/pdf" if suffix == "pdf"
+        else "text/markdown; charset=utf-8" if suffix == "md"
+        else "application/octet-stream"
+    )
+    headers = _cors_headers()
+    headers["Content-Type"] = content_type
+    headers["Cache-Control"] = "no-store"
+    return {
+        "statusCode": 200,
+        "headers": headers,
+        "body": base64.b64encode(body).decode("ascii"),
+        "isBase64Encoded": True,
+    }
+
+
+def _agent_output(payload: dict[str, Any]) -> dict[str, Any]:
+    """Generate Compliance or Decision agent narrative lines via Claude.
+
+    Mirrors `/api/agent-output` in `vite.config.ts`. The model is told
+    to return strict JSON; we extract the first {...} block defensively
+    so stray markdown fences don't break the FE.
+    """
+    agent = str(payload.get("agent") or "").strip().lower()
+    if agent not in ("compliance", "decision"):
+        raise ValueError("agent must be 'compliance' or 'decision'")
+    ctx = payload.get("context") or {}
+
+    systems = {
+        "compliance": (
+            "You are the COMPLIANCE agent in a maritime bunkering fraud detection system.\n\n"
+            "Given a session's risk score, anomalies, supplier sanctions check, and evidence hashes,\n"
+            "write a short compliance verification summary.\n\n"
+            "Return ONLY a JSON object — no markdown, no prose:\n"
+            "{\n"
+            '  "lines": [\n'
+            '    "<one-line evidence package status>",\n'
+            '    "<one-line regulatory citation: MARPOL / MPA / ISO 8217 / SS 648>",\n'
+            '    "<one-line blockchain anchor / chain-of-custody status>"\n'
+            "  ],\n"
+            '  "confidence": <0-100 integer>\n'
+            "}"
+        ),
+        "decision": (
+            "You are the DECISION agent in a maritime bunkering fraud detection system.\n\n"
+            "Given a session's risk score, anomalies, Exa intelligence, and Compliance findings,\n"
+            "recommend a verdict for the Chief Engineer.\n\n"
+            "Return ONLY a JSON object — no markdown, no prose:\n"
+            "{\n"
+            '  "lines": [\n'
+            '    "<verdict line — REFUSE_TO_SIGN / SIGN_WITH_OBJECTION / APPROVE — plus one-sentence reason>",\n'
+            '    "<dollar exposure or operational impact, one line>",\n'
+            '    "<recommended next action: LoP / independent survey / MPA notification / proceed>"\n'
+            "  ],\n"
+            '  "confidence": <0-100 integer>\n'
+            "}"
+        ),
+    }
+
+    user_msg = (
+        f"CONTEXT for session {ctx.get('session_id', 'unknown')}:\n"
+        + json.dumps(ctx, default=str, indent=2)
+    )
+    result = call_text(systems[agent], [{"role": "user", "content": user_msg}], max_tokens=400)
+    raw_text = result.get("text") or ""
+    # Defensive JSON extraction — the model is told to return strict
+    # JSON but may wrap it in fences.
+    import re
+
+    parsed: dict[str, Any] = {}
+    match = re.search(r"\{[\s\S]*\}", raw_text)
+    if match:
+        try:
+            parsed = json.loads(match.group(0))
+        except Exception:
+            parsed = {}
+    lines = [l for l in (parsed.get("lines") or []) if isinstance(l, str)]
+    if not lines:
+        lines = [l for l in raw_text.split("\n") if l.strip()][:3]
+
+    confidence = parsed.get("confidence")
+    return {
+        "ok": True,
+        "agent": agent,
+        "lines": lines,
+        "confidence": confidence if isinstance(confidence, (int, float)) else None,
+        "provider": result.get("provider"),
+        "modelId": result.get("model_id"),
+    }
+
+
+def _enrich(payload: dict[str, Any]) -> dict[str, Any]:
+    """Run Exa entity enrichment for the Investigator agent.
+
+    Direct import of `enrichment.enrich_entities` — same module the
+    Vite dev proxy invokes via subprocess. Requires EXA_API_KEY in env.
+    """
+    from enrichment.pipeline import enrich_entities
+
+    result = enrich_entities(payload or {})
+    return {"ok": True, "result": result}
 
 
 def _evidence_report(payload: dict[str, Any]) -> dict[str, Any]:
@@ -282,6 +497,16 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
             return _response(200, result)
         if method == "POST" and path == "/api/evidence-report":
             return _response(200, _evidence_report(_body(event)))
+        if method == "POST" and path == "/api/copilot-chat":
+            return _response(200, _copilot_chat(_body(event)))
+        if method == "POST" and path == "/api/agent-output":
+            return _response(200, _agent_output(_body(event)))
+        if method == "POST" and path == "/api/enrich":
+            return _response(200, _enrich(_body(event)))
+        if method == "GET" and path.startswith("/api/copilot-asset/"):
+            # Binary response — built by _copilot_asset so the wrapper
+            # doesn't JSON-encode the image bytes.
+            return _copilot_asset(path[len("/api/copilot-asset/"):])
         if method == "POST" and path == "/api/ingest-bdn":
             return _response(202, _ingest_bdn(_body(event)))
         if method == "GET" and path.startswith("/api/ingestion/"):
